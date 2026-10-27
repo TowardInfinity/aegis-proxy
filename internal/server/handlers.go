@@ -1,12 +1,14 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"guardrail/internal/pipeline"
 	"guardrail/internal/wire"
@@ -57,6 +59,27 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request, shape pipel
 		sink = &streamSink{w: w}
 	}
 	return s.orch.Execute(r.Context(), req, sink)
+}
+
+// handleCountTokens answers Claude Code's /v1/messages/count_tokens locally.
+// Forwarding it would send the unredacted conversation upstream, and
+// OpenAI-wire upstreams have no such endpoint. The estimate is chars/4 over
+// the whole body, so tool definitions count and it errs high, which is the
+// safe side for context-window decisions.
+func (s *Server) handleCountTokens(w http.ResponseWriter, r *http.Request) pipeline.Result {
+	raw, err := readBody(r)
+	if err != nil {
+		return bodyError(pipeline.ShapeAnthropic, http.StatusRequestEntityTooLarge, err.Error())
+	}
+	if _, err := wire.ParseAnthropic(raw); err != nil {
+		return bodyError(pipeline.ShapeAnthropic, http.StatusBadRequest, err.Error())
+	}
+	body, _ := json.Marshal(map[string]int{"input_tokens": (utf8.RuneCount(raw) + 3) / 4})
+	return pipeline.Result{
+		Status:  http.StatusOK,
+		Body:    body,
+		Headers: map[string]string{"Content-Type": "application/json"},
+	}
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) pipeline.Result {

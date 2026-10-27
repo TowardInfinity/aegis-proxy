@@ -182,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/completions", s.guard("/v1/completions", s.handleCompletions))
 	mux.HandleFunc("/v1/embeddings", s.guard("/v1/embeddings", s.handleEmbeddings))
 	mux.HandleFunc("/v1/messages", s.guard("/v1/messages", s.handleMessages))
+	mux.HandleFunc("/v1/messages/count_tokens", s.guard("/v1/messages/count_tokens", s.handleCountTokens))
 	mux.HandleFunc("/v1/models", s.guard("/v1/models", s.handleModels))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
