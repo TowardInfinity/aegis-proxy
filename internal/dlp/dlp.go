@@ -96,12 +96,15 @@ var catalog = map[string]Detector{
 var (
 	reEmail = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	rePhone = regexp.MustCompile(`\+?\d[\d\s().\-]{7,18}\d`)
-	reSSN   = regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)
-	reCard  = regexp.MustCompile(`\b(?:\d[ \-]?){12,18}\d\b`)
-	reAWS   = regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b`)
-	reJWT   = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\b`)
-	rePriv  = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
-	reIBAN  = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`)
+	// reDate matches a leading calendar date (2026-10-28, 28-10-2026,
+	// 10/28/2026), which the phone pattern would otherwise swallow.
+	reDate = regexp.MustCompile(`^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4})`)
+	reSSN  = regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`)
+	reCard = regexp.MustCompile(`\b(?:\d[ \-]?){12,18}\d\b`)
+	reAWS  = regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b`)
+	reJWT  = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\b`)
+	rePriv = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
+	reIBAN = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`)
 
 	// The value group is what gets tokenized; keying on the assignment keeps
 	// "api_key=" from matching prose that merely mentions the word. The
@@ -123,10 +126,14 @@ func scanPhone(text string) []Match {
 		if digits < 7 || digits > 15 {
 			continue
 		}
-		// A lone date such as 2024-01-01 has 8 digits; require a separator-free
-		// run or an explicit plus to look like a phone number.
+		// A bare digit run is more likely an ID than a phone number, so require
+		// a separator, a plus or an international 00 prefix. Dates have
+		// separators too; agents send today's date in every system prompt.
 		raw := text[m[0]:m[1]]
 		if !strings.HasPrefix(raw, "+") && !strings.ContainsAny(raw, " ()-") && !strings.HasPrefix(raw, "00") {
+			continue
+		}
+		if reDate.MatchString(raw) {
 			continue
 		}
 		out = append(out, Match{Type: "PHONE", Rule: "phone", Score: 0.6, Start: m[0], End: m[1], Value: raw})
