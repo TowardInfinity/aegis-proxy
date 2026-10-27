@@ -93,3 +93,44 @@ func TestE2EJudgeUnavailableFailsOpenOrClosed(t *testing.T) {
 		t.Fatalf("fail-closed status = %d calls = %d", res.Status, closed.up.CallCount())
 	}
 }
+
+// Claude Code trails the user turn with an empty system message; the judge
+// must still read the user turn.
+func TestE2EJudgeReadsUserTurnBeforeTrailingSystemMessage(t *testing.T) {
+	j := &fakeJudge{verdict: pipeline.JudgeVerdict{Escalate: true, Reason: "forecast"}}
+	h := newHarness(t, nil, &stubLedger{}, withJudge(j, false))
+	req := chatRequest(t, "CONFIDENTIAL: Q3 forecast is 4.2B")
+	req.Messages = append(req.Messages, pipeline.Message{Role: "system"})
+	res := h.orch.Execute(context.Background(), req, nil)
+	if res.Status != http.StatusForbidden || len(j.seen) != 1 || !strings.Contains(j.seen[0], "Q3 forecast") {
+		t.Fatalf("status = %d, judge saw %q", res.Status, j.seen)
+	}
+}
+
+// A held tool result stays in the agent's history. The next turn must not
+// carry it upstream, even though the newest message is harmless.
+func TestE2EHeldContentStaysBlockedInLaterTurns(t *testing.T) {
+	j := &fakeJudge{verdict: pipeline.JudgeVerdict{Escalate: true, Reason: "forecast"}}
+	h := newHarness(t, nil, &stubLedger{}, withJudge(j, false))
+	first := h.orch.Execute(context.Background(), chatRequest(t, "CONFIDENTIAL: Q3 forecast is 4.2B"), nil)
+	if first.Status != http.StatusForbidden {
+		t.Fatalf("first status = %d", first.Status)
+	}
+	retry := h.orch.Execute(context.Background(), chatRequest(t, "CONFIDENTIAL: Q3 forecast is 4.2B"), nil)
+	if retry.Headers["X-Guardrail-Ticket"] != first.Headers["X-Guardrail-Ticket"] {
+		t.Fatalf("retry got ticket %q, want %q", retry.Headers["X-Guardrail-Ticket"], first.Headers["X-Guardrail-Ticket"])
+	}
+
+	j.verdict = pipeline.JudgeVerdict{}
+	next := chatRequest(t, "CONFIDENTIAL: Q3 forecast is 4.2B")
+	next.Messages = append(next.Messages,
+		pipeline.Message{Role: "assistant", Content: "I can't help with that."},
+		pipeline.Message{Role: "user", Content: "ok, write a binary search instead"})
+	res := h.orch.Execute(context.Background(), next, nil)
+	if res.Status != http.StatusForbidden || h.up.CallCount() != 0 {
+		t.Fatalf("held history went upstream: status %d calls %d", res.Status, h.up.CallCount())
+	}
+	if res.Headers["X-Guardrail-Ticket"] != first.Headers["X-Guardrail-Ticket"] {
+		t.Fatalf("held ticket %q, want %q", res.Headers["X-Guardrail-Ticket"], first.Headers["X-Guardrail-Ticket"])
+	}
+}

@@ -57,7 +57,7 @@ security:
   tamper: true                          # refuse to start on an unsigned config
   tamper_key_file: "guardrail_ed25519.pub"
   max_body_bytes: 1048576               # requests above this get 413
-  max_tokens: 8192                      # schema ceiling for max_tokens
+  max_tokens: 8192                      # schema ceiling; Claude Code needs 200000
   rate_limit_per_min: 60                # per API key
   rate_limit_per_min_ip: 120            # per client IP
   # Optional per-family block scores. Zero means the built-in default
