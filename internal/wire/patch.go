@@ -1,9 +1,9 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"guardrail/internal/pipeline"
 )
@@ -82,43 +82,69 @@ func patchAnthropic(raw []byte, req *pipeline.Request, model string, maxTokens i
 	}
 	doc["model"] = mustJSON(model)
 	doc["max_tokens"] = mustJSON(maxTokens)
-	doc["temperature"] = mustJSON(req.Temperature)
+	// Claude Code omits temperature when extended thinking is on, and the API
+	// rejects anything but the default there, so only echo an explicit value.
+	if req.TemperatureSet {
+		doc["temperature"] = mustJSON(req.Temperature)
+	}
 	if req.Stream {
 		doc["stream"] = mustJSON(true)
 	} else {
 		delete(doc, "stream")
 	}
 
-	var system []string
 	var msgs []map[string]json.RawMessage
 	if len(doc["messages"]) > 0 {
 		if err := json.Unmarshal(doc["messages"], &msgs); err != nil {
 			return nil, fmt.Errorf("messages: %w", err)
 		}
 	}
-	// Internal messages put system turns first, so the split is positional and
-	// matches the order the client sent.
+	// Each internal message carries its leaves in wire order, so redacted text
+	// goes back into the block it came from. Block structure, cache_control,
+	// tool ids, and untouched leaves keep their original bytes, which keeps
+	// Anthropic prompt caching intact across turns.
 	idx := 0
+	changed := false
 	for _, m := range req.Messages {
 		if m.Role == "system" {
-			system = append(system, m.Content)
+			if m.Parts != nil {
+				doc["system"] = applyLeaves(doc["system"], m.Parts)
+			}
 			continue
 		}
 		if idx < len(msgs) {
-			msgs[idx]["content"] = replaceContent(msgs[idx]["content"], m.Content)
+			out := applyLeaves(msgs[idx]["content"], m.Parts)
+			if !bytes.Equal(out, msgs[idx]["content"]) {
+				msgs[idx]["content"] = out
+				changed = true
+			}
 		}
 		idx++
 	}
-	doc["messages"] = mustJSON(msgs)
-	// The internal message list is the source of truth after redaction, so
-	// rebuild system from it. Appending to the original would duplicate the
-	// client's system prompt on every request.
-	if len(system) > 0 {
-		doc["system"] = mustJSON(strings.Join(system, "\n\n"))
-	} else {
-		delete(doc, "system")
+	if changed {
+		doc["messages"] = mustJSON(msgs)
+	}
+	if req.Nudge {
+		doc["system"] = appendSystem(doc["system"], pipeline.SoftNudgeText)
 	}
 	return json.Marshal(doc)
+}
+
+// appendSystem adds text after the existing system prompt. Appending, not
+// prepending, leaves the cached system prefix unchanged.
+func appendSystem(existing json.RawMessage, text string) json.RawMessage {
+	switch firstByte(existing) {
+	case '"':
+		var s string
+		_ = json.Unmarshal(existing, &s)
+		return mustJSON(s + "\n\n" + text)
+	case '[':
+		var blocks []json.RawMessage
+		if json.Unmarshal(existing, &blocks) == nil {
+			return mustJSON(append(blocks, mustJSON(map[string]string{"type": "text", "text": text})))
+		}
+	}
+	return mustJSON(text)
 }
 
 // replaceContent keeps a plain string a plain string, and edits the text parts

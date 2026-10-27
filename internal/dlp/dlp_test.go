@@ -51,13 +51,17 @@ func TestGenericSecretVariants(t *testing.T) {
 		`api_key = "sk_live_9f8a7b6c5d4e"`,
 		"client_secret: AbCdEf123456",
 		"Authorization: bearer abcdefghijklmnopqrstuvwxyz012345",
+		"DB_PASSWORD=hunter2secret9",
+		"export OPENAI_API_KEY=abc123def456ghi", // gitleaks:allow
+		"STRIPE_SECRET_KEY=live51Habc123def456", // gitleaks:allow
+		"GITHUB_ACCESS_TOKEN: abcdef123456",     // gitleaks:allow
 		"postgres://admin:s3cr3tpass@db.internal:5432/app",
 	} {
 		if got := Scan(dets, text); len(got) == 0 {
 			t.Errorf("no generic_secret match in %q", text)
 		}
 	}
-	for _, text := range []string{"password=changeme", "api_key=redacted", `secret_key = "example"`} {
+	for _, text := range []string{"password=changeme", "api_key=redacted", `secret_key = "example"`, "max_tokens: 1024", "PWD=/home/user/project"} {
 		if got := Scan(dets, text); len(got) != 0 {
 			t.Errorf("false positive on placeholder %q: %+v", text, got)
 		}

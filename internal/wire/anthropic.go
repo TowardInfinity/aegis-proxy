@@ -66,35 +66,17 @@ func ParseAnthropic(raw []byte) (*pipeline.Request, error) {
 		req.Temperature = *body.Temperature
 		req.TemperatureSet = true
 	}
-	if sys := anthropicText(body.System); sys != "" {
-		req.Messages = append(req.Messages, pipeline.Message{Role: "system", Content: sys})
+	if sys := collectLeaves(body.System); len(sys) > 0 {
+		m := pipeline.Message{Role: "system"}
+		m.SetParts(sys)
+		req.Messages = append(req.Messages, m)
 	}
-	for i, m := range body.Messages {
-		req.Messages = append(req.Messages, pipeline.Message{Role: defaultsRole(m.Role), Content: anthropicText(m.Content)})
-		_ = i
+	for _, raw := range body.Messages {
+		m := pipeline.Message{Role: defaultsRole(raw.Role)}
+		m.SetParts(collectLeaves(raw.Content))
+		req.Messages = append(req.Messages, m)
 	}
 	return req, nil
-}
-
-// anthropicText flattens system or content, which is either a string or an
-// array of blocks.
-func anthropicText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s
-	}
-	var blocks []AnthropicBlock
-	if json.Unmarshal(raw, &blocks) == nil {
-		var b strings.Builder
-		for _, blk := range blocks {
-			b.WriteString(blk.Text)
-		}
-		return b.String()
-	}
-	return ""
 }
 
 // BuildAnthropicRequest maps the internal request to a Messages body. System

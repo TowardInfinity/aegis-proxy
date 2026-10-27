@@ -237,16 +237,30 @@ func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
 		r.dec.Redactions = map[string]string{}
 	}
 	changed := false
-	for i := range r.req.Messages {
-		out, redactions, hits := red.Redact(r.req.Messages[i].Content)
-		if out != r.req.Messages[i].Content {
+	redact := func(text string) string {
+		out, redactions, hits := red.Redact(text)
+		if out != text {
 			changed = true
-			r.req.Messages[i].Content = out
 		}
 		for tok, v := range redactions {
 			r.dec.Redactions[tok] = v
 		}
 		r.dec.RuleHits = append(r.dec.RuleHits, toRuleHits(hits)...)
+		return out
+	}
+	for i := range r.req.Messages {
+		m := &r.req.Messages[i]
+		if m.Parts == nil {
+			m.Content = redact(m.Content)
+			continue
+		}
+		// Redact leaf by leaf so the wire layer can put each one back in its
+		// own block; a match never spans two blocks anyway.
+		parts := make([]string, len(m.Parts))
+		for j, p := range m.Parts {
+			parts[j] = redact(p)
+		}
+		m.SetParts(parts)
 	}
 	if changed {
 		if r.dec.Action == ActionPass {

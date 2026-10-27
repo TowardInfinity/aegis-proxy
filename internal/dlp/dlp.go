@@ -104,8 +104,10 @@ var (
 	reIBAN  = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`)
 
 	// The value group is what gets tokenized; keying on the assignment keeps
-	// "api_key=" from matching prose that merely mentions the word.
-	reSecretKV = regexp.MustCompile(`(?i)\b(?:password|passwd|pwd|api_key|apikey|client_secret|secret_key|access_token)\b\s*[:=]\s*["']?([^\s"',;]{6,})`)
+	// "api_key=" from matching prose that merely mentions the word. The
+	// keyword may sit inside an identifier, as .env files name them
+	// (DB_PASSWORD, STRIPE_SECRET_KEY, OPENAI_API_KEY).
+	reSecretKV = regexp.MustCompile(`(?i)\b\w*(?:password|passwd|pwd|api_?key|client_secret|secret|access_?token|auth_?token|private_?key)\w*\s*[:=]\s*["']?([^\s"',;]{6,})`)
 	reBearer   = regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9\-._~+/]{16,}=*)`)
 	reConnStr  = regexp.MustCompile(`(?i)\b[a-z]+\+?[a-z]*://[^\s:/@]+:[^\s@/]+@`)
 )

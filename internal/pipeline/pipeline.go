@@ -5,6 +5,7 @@ package pipeline
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 )
 
 // Shape is the wire protocol the client speaks. It decides how the response
@@ -20,9 +21,21 @@ const (
 
 // Message is one conversational turn. Content is flattened to text at the
 // boundary; multimodal parts and tool calls do not survive normalization.
+//
+// Parts, when non-nil, holds every text-bearing leaf of a block-structured
+// message (text blocks, tool results, tool inputs) in wire order. Stages edit
+// Parts and the wire layer writes each leaf back in place, so block structure
+// survives redaction. Content is then the leaves joined by newlines.
 type Message struct {
 	Role    string
 	Content string
+	Parts   []string
+}
+
+// SetParts replaces the leaves and keeps Content in sync.
+func (m *Message) SetParts(parts []string) {
+	m.Parts = parts
+	m.Content = strings.Join(parts, "\n")
 }
 
 // Request is the normalized internal request. Every field is already parsed
@@ -40,10 +53,10 @@ type Request struct {
 	// wire-layer default, so cache keys can ignore defaulted values.
 	TemperatureSet bool
 	Stream         bool
-	Stop        []string
-	RawBody     []byte
-	CacheBypass bool
-	Shape       Shape
+	Stop           []string
+	RawBody        []byte
+	CacheBypass    bool
+	Shape          Shape
 	// Nudge marks that the budget stage added its soft system message. The
 	// wire layer prepends it when rebuilding a request it cannot patch.
 	Nudge bool
