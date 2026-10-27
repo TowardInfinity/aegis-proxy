@@ -19,10 +19,12 @@ Throughput checkpoint:
 - **Smallest safe decomposition.** One worker is best: single fresh greenfield pipeline, packages share the core config/PII types; two workers would conflict on the same files.
 
 Checklist:
-- [ ] Design doc (DESIGN.md) — modified idea
-- [ ] git init + scaffold commit
-- [ ] Delegate implements core packages
+- [x] Design doc (DESIGN.md) — modified idea
+- [x] git init + scaffold commit
+- [ ] Delegate implements core packages (running in background)
 - [ ] Delegate implements proxy HTTP layer + cmds + config example
 - [ ] Delegate implements tests + e2e smoke test
 - [ ] Parent review + verify on real binary
 - [ ] Commit + merge
+- [ ] README + demo polish
+- [ ] Research subagent: embedded small-model classification (Laya / ONNX / injection classifiers) — running in background; fold findings into DESIGN.md + README after build lands

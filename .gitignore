@@ -1,0 +1,14 @@
+guardrail.db
+guardrail.db-wal
+guardrail.db-shm
+guardrail.db-journal
+guardrail_ed25519.priv
+guardrail_ed25519.pub
+config.yaml.sig
+config.yaml
+/guardrail
+/guardrail.exe
+*.test
+*.out
+
+demo/
