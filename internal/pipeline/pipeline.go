@@ -77,6 +77,7 @@ const (
 const (
 	StageValidate     = "validate"
 	StageRedact       = "redact"
+	StageJudge        = "judge"
 	StageCache        = "cache"
 	StageBudget       = "budget"
 	StageRoute        = "route"

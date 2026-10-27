@@ -19,6 +19,7 @@ import (
 	"guardrail/internal/cache"
 	"guardrail/internal/config"
 	"guardrail/internal/dlp"
+	"guardrail/internal/judge"
 	"guardrail/internal/pipeline"
 	"guardrail/internal/route"
 	"guardrail/internal/security"
@@ -114,9 +115,29 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 			}
 			return a, true
 		},
-		Audit: au,
+		Audit:           au,
+		Judge:           judgeFrom(cfg.Judge),
+		JudgeTriggers:   cfg.Judge.Triggers,
+		JudgeAlways:     cfg.Judge.Always,
+		JudgeFailClosed: cfg.Judge.FailClosed,
 	}, c, ledgerAdapter{ledger: ledger, limits: limitsFrom(cfg.Budget)}, limiter)
 	return s, nil
+}
+
+// judgeFrom returns nil when the judge is off, which disables the stage.
+func judgeFrom(j config.JudgeConfig) pipeline.Judge {
+	if !j.Enabled {
+		return nil
+	}
+	timeout := j.Timeout.Std()
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	key := ""
+	if j.AuthEnv != "" {
+		key = os.Getenv(j.AuthEnv)
+	}
+	return judge.New(j.BaseURL, j.Model, key, j.Policy, timeout)
 }
 
 // ledgerAdapter binds the configured limits to the checks the pipeline makes,

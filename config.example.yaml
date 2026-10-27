@@ -94,6 +94,25 @@ budget:
     "gpt-4o": {input: 2.5, output: 10.0}
     "gpt-4o-mini": {input: 0.15, output: 0.6}
 
+# AI judge for what regex can't settle: company-confidential prose such as
+# forecasts, M&A, roadmaps. It speaks any OpenAI-compatible endpoint and only
+# sees text after DLP redaction. In production, point it at the company's own
+# model (e.g. AIPro). For the demo, use a free OpenRouter model.
+judge:
+  enabled: false
+  base_url: "https://openrouter.ai/api/v1"
+  model: "google/gemma-4-26b-a4b-it:free"
+  auth_env: OPENROUTER_API_KEY
+  timeout: 5s
+  # Judge only the newest message, and only when one of these appears or a
+  # security rule scores in the grey zone. always: true judges every request.
+  triggers: ["confidential", "internal use only", "do not distribute", "forecast", "acquisition", "merger", "roadmap"]
+  always: false
+  # true: refuse the request (503) when the judge is down. false: pass it with
+  # an audit note.
+  fail_closed: false
+  # policy: "" uses the built-in policy; replace it with your classification policy.
+
 # Optional ML classifier contract from DESIGN.md. This build is regex-only, so
 # leave enabled false. Starting with ml.enabled true is refused with a clear
 # error rather than silently ignoring the setting.

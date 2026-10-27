@@ -88,6 +88,29 @@ type Config struct {
 	RouteFor func(name string) (Adapter, bool)
 	Encoding Encoder
 	Audit    *audit.Logger
+
+	// Judge, when set, reviews the newest turn of requests that hit a
+	// trigger. JudgeAlways reviews every request; JudgeFailClosed blocks when
+	// the judge cannot answer instead of passing with an audit note.
+	Judge           Judge
+	JudgeTriggers   []string
+	JudgeAlways     bool
+	JudgeFailClosed bool
+}
+
+// JudgeVerdict is an LLM's decision on text the deterministic stages could
+// not settle.
+type JudgeVerdict struct {
+	Escalate bool
+	Category string
+	Reason   string
+	Cached   bool
+	Latency  time.Duration
+}
+
+// Judge reviews redacted text. Implementations must be safe for concurrent use.
+type Judge interface {
+	Judge(ctx context.Context, text string) (JudgeVerdict, error)
 }
 
 // Orchestrator runs the stages in DESIGN.md order.
@@ -120,6 +143,9 @@ type run struct {
 	cacheKey  string
 	shape     Shape
 	upstream  Shape
+	// grey is the strongest security rule that fired below its block
+	// threshold; it sends the request to the judge.
+	grey string
 }
 
 // Execute runs the pipeline for one request. sink is non-nil for a streaming
@@ -142,6 +168,9 @@ func (o *Orchestrator) Execute(ctx context.Context, req *Request, sink ResponseS
 		return res
 	}
 	if res, stop := o.stageRedact(r); stop {
+		return res
+	}
+	if res, stop := o.stageJudge(ctx, r); stop {
 		return res
 	}
 	if res, stop := o.stageCache(r); stop {
@@ -219,6 +248,12 @@ func (o *Orchestrator) stageValidate(r *run) (Result, bool) {
 	}
 	v := security.ScanRequest(o.detector, r.req.Text(), o.cfg.Thresholds, o.cfg.Monitor)
 	r.dec.RuleHits = append(r.dec.RuleHits, toRuleHitsSecurity(v.Hits)...)
+	best := 0.0
+	for _, h := range v.Hits {
+		if h.Score >= 0.5 && h.Score > best {
+			best, r.grey = h.Score, h.Rule
+		}
+	}
 	if v.Block {
 		return o.fail(r, http.StatusForbidden, ActionBlock, StageValidate,
 			fmt.Sprintf("%s detector scored %.2f, at or above the block threshold", v.Family, v.Score)), true
@@ -270,6 +305,68 @@ func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
 	}
 	r.dec.EstimatedTokens = estimate(r.req)
 	return Result{}, false
+}
+
+// stageJudge asks the LLM judge about the newest turn when a trigger fires.
+// Only the newest turn is sent: coding agents resend the whole history every
+// turn, and earlier turns were judged when they were new.
+func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
+	if o.cfg.Judge == nil || len(r.req.Messages) == 0 {
+		return Result{}, false
+	}
+	text := r.req.Messages[len(r.req.Messages)-1].Content
+	trigger := o.judgeTrigger(r, text)
+	if trigger == "" {
+		return Result{}, false
+	}
+	v, err := o.cfg.Judge.Judge(ctx, text)
+	if err != nil {
+		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_unavailable", Sample: maskSample(err.Error())})
+		if o.cfg.JudgeFailClosed {
+			return o.fail(r, http.StatusServiceUnavailable, ActionBlock, StageJudge,
+				"the security judge is unavailable and policy requires its review; try again shortly"), true
+		}
+		return Result{}, false
+	}
+	r.headers["X-Guardrail-Judge"] = judgeHeader(v)
+	if !v.Escalate {
+		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_allow", Sample: trigger})
+		return Result{}, false
+	}
+	ticket := "SEC-" + strings.ToUpper(r.req.ID[:min(8, len(r.req.ID))])
+	r.headers["X-Guardrail-Ticket"] = ticket
+	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: v.Category + ": " + v.Reason})
+	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge,
+		fmt.Sprintf("held for security review (ticket %s): %s", ticket, v.Reason)), true
+}
+
+// judgeTrigger names why a request needs the judge, or returns "" when the
+// deterministic stages already settled it.
+func (o *Orchestrator) judgeTrigger(r *run, text string) string {
+	if o.cfg.JudgeAlways {
+		return "always"
+	}
+	lower := strings.ToLower(text)
+	for _, kw := range o.cfg.JudgeTriggers {
+		if kw != "" && strings.Contains(lower, strings.ToLower(kw)) {
+			return "keyword:" + kw
+		}
+	}
+	if r.grey != "" {
+		return "grey:" + r.grey
+	}
+	return ""
+}
+
+func judgeHeader(v JudgeVerdict) string {
+	decision := "allow"
+	if v.Escalate {
+		decision = "escalate"
+	}
+	if v.Cached {
+		return decision + "; cached"
+	}
+	return fmt.Sprintf("%s; %dms", decision, v.Latency.Milliseconds())
 }
 
 // stageCache looks up the normalized prompt.

@@ -35,6 +35,9 @@ type Config struct {
 	// ML is accepted so configs written against the extended design parse, but
 	// this build has no ONNX runtime and refuses to start with it enabled.
 	ML MLConfig `yaml:"ml"`
+	// Judge is the LLM review stage for requests the deterministic stages
+	// could not settle.
+	Judge JudgeConfig `yaml:"judge"`
 
 	// SourcePath and SourceHash are filled in by Load, never by YAML.
 	SourcePath string `yaml:"-"`
@@ -119,6 +122,21 @@ type MLConfig struct {
 	TimeoutMS int     `yaml:"timeout_ms"`
 }
 
+// JudgeConfig points the review stage at any OpenAI-compatible endpoint.
+// The judge sees only redacted text, but in production it should still be a
+// model the company controls.
+type JudgeConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	BaseURL    string   `yaml:"base_url"`
+	Model      string   `yaml:"model"`
+	AuthEnv    string   `yaml:"auth_env"`
+	Timeout    Duration `yaml:"timeout"`
+	Policy     string   `yaml:"policy"`
+	Triggers   []string `yaml:"triggers"`
+	Always     bool     `yaml:"always"`
+	FailClosed bool     `yaml:"fail_closed"`
+}
+
 // Load reads and validates the config at path. Signature handling is separate
 // so the caller can decide whether to fail closed.
 func Load(path string) (*Config, []byte, error) {
@@ -192,6 +210,9 @@ func (c *Config) Validate() error {
 		if !validDetector(d) {
 			return fmt.Errorf("pii.detectors: unknown detector %q", d)
 		}
+	}
+	if c.Judge.Enabled && (c.Judge.BaseURL == "" || c.Judge.Model == "") {
+		return errors.New("judge.enabled requires judge.base_url and judge.model")
 	}
 	if c.ML.Enabled {
 		return errors.New("ml.enabled requires the ONNX classifier, which this build does not include; run with ml.enabled: false")
