@@ -268,6 +268,7 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("/held", s.admin(s.handleHeldList))
 	mux.HandleFunc("POST /held/{ticket}/approve", s.admin(s.handleHeldApprove))
 	mux.HandleFunc("POST /held/{ticket}/reject", s.admin(s.handleHeldReject))
+	mux.HandleFunc("POST /simulate", s.admin(s.handleSimulate))
 	return withNotFound(mux)
 }
 
@@ -280,8 +281,8 @@ func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 		switch r.Method {
 		case http.MethodGet:
 		case http.MethodPost:
-			// Approvals are the only admin writes. Everything else stays read-only.
-			if !strings.HasPrefix(r.URL.Path, "/held/") {
+			// Approvals and the playground are the only admin writes.
+			if r.URL.Path != "/simulate" && !strings.HasPrefix(r.URL.Path, "/held/") {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
