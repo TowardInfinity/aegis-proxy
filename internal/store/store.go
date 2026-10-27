@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,7 +28,9 @@ CREATE TABLE IF NOT EXISTS audit (
 	cost_usd REAL NOT NULL DEFAULT 0,
 	cache_hit INTEGER NOT NULL DEFAULT 0,
 	saved_tokens INTEGER NOT NULL DEFAULT 0,
-	saved_usd REAL NOT NULL DEFAULT 0
+	saved_usd REAL NOT NULL DEFAULT 0,
+	request_id TEXT NOT NULL DEFAULT '',
+	trace TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS audit_key_ts ON audit("key", ts);
@@ -84,6 +87,17 @@ func Open(path string) (*sql.DB, error) {
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
+	}
+	// Existing databases already have the audit table, so the CREATE above
+	// does not add columns. ALTER is idempotent: a second run hits
+	// "duplicate column name" and that error alone is ignored.
+	for _, stmt := range []string{
+		`ALTER TABLE audit ADD COLUMN request_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE audit ADD COLUMN trace TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
 	}
 	return nil
 }

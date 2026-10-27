@@ -154,7 +154,9 @@ type run struct {
 	upstream  Shape
 	// grey is the strongest security rule that fired below its block
 	// threshold; it sends the request to the judge.
-	grey string
+	grey  string
+	id    string
+	trace []audit.TraceStep
 }
 
 // Execute runs the pipeline for one request. sink is non-nil for a streaming
@@ -164,11 +166,15 @@ func (o *Orchestrator) Execute(ctx context.Context, req *Request, sink ResponseS
 	if shape == "" {
 		shape = ShapeChat
 	}
+	if req.ID == "" {
+		req.ID = NewID()
+	}
 	r := &run{
+		id:      req.ID,
 		req:     req,
 		start:   time.Now(),
 		shape:   shape,
-		headers: map[string]string{},
+		headers: map[string]string{"X-Guardrail-Request-Id": req.ID},
 		dec:     Decision{Action: ActionPass, Stage: StageValidate},
 	}
 	defer o.finish(r)
@@ -215,6 +221,8 @@ func (o *Orchestrator) finish(r *run) {
 		CacheHit:     r.dec.Action == ActionCacheHit,
 		SavedTokens:  savedTokens(r),
 		SavedUSD:     savedUSD(r),
+		RequestID:    r.id,
+		Trace:        append([]audit.TraceStep(nil), r.trace...),
 	})
 }
 
@@ -253,11 +261,14 @@ func (o *Orchestrator) fail(r *run, status int, action Action, stage, reason str
 
 // stageValidate checks schema, rate limit, and injection.
 func (o *Orchestrator) stageValidate(r *run) (Result, bool) {
+	start := time.Now()
 	if err := security.Schema(securityRequest(r.req), o.cfg.MaxTokens, int(o.cfg.MaxBodyBytes)); err != nil {
+		r.step(StageValidate, "block", err.Error(), start)
 		return o.fail(r, http.StatusBadRequest, ActionBlock, StageValidate, err.Error()), true
 	}
 	if o.limiter != nil && !o.limiter.Allow(r.req.Key, r.req.ClientIP) {
 		r.headers["Retry-After"] = "60"
+		r.step(StageValidate, "block", "rate limit exceeded", start)
 		return o.fail(r, http.StatusTooManyRequests, ActionBlock, StageValidate, "rate limit exceeded for this key or client IP"), true
 	}
 	v := security.ScanRequest(o.detector, r.req.Text(), o.cfg.Thresholds, o.cfg.Monitor)
@@ -269,18 +280,23 @@ func (o *Orchestrator) stageValidate(r *run) (Result, bool) {
 		}
 	}
 	if v.Block {
+		r.step(StageValidate, "block", validateDetail(v), start)
 		return o.fail(r, http.StatusForbidden, ActionBlock, StageValidate,
 			fmt.Sprintf("%s detector scored %.2f, at or above the block threshold", v.Family, v.Score)), true
 	}
+	r.step(StageValidate, "pass", "ok", start)
 	return Result{}, false
 }
 
 // stageRedact replaces sensitive values in every message.
 func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
+	start := time.Now()
 	if !o.cfg.Redact || len(o.cfg.Detectors) == 0 {
 		r.dec.EstimatedTokens = estimate(r.req)
+		r.step(StageRedact, "skip", "off", start)
 		return Result{}, false
 	}
+	before := len(r.dec.RuleHits)
 	red := &dlp.Redactor{Detectors: o.cfg.Detectors, Vault: o.cfg.Vault}
 	if r.dec.Redactions == nil {
 		r.dec.Redactions = map[string]string{}
@@ -318,6 +334,8 @@ func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
 		r.dec.Stage = StageRedact
 	}
 	r.dec.EstimatedTokens = estimate(r.req)
+	outcome, detail := redactDetail(r.dec.RuleHits[before:])
+	r.step(StageRedact, outcome, detail, start)
 	return Result{}, false
 }
 
@@ -325,11 +343,14 @@ func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
 // Only the newest turn is sent: coding agents resend the whole history every
 // turn, and earlier turns were judged when they were new.
 func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
+	start := time.Now()
 	if o.cfg.Judge == nil {
+		r.step(StageJudge, "skip", "off", start)
 		return Result{}, false
 	}
 	text := newestUserText(r.req.Messages)
 	skipJudge := false
+	var approved Held
 	if text != "" {
 		hash, _ := hashHeld(text)
 		// An approval has to win before the judge runs: the verdict cache
@@ -339,16 +360,23 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 			r.headers["X-Guardrail-Judge"] = "approved"
 			r.headers["X-Guardrail-Ticket"] = e.Ticket
 			skipJudge = true
+			approved = e
 		}
 	}
 	if e, ok := o.held.FindHeld(r.req.Messages); ok {
-		return o.blockHeld(r, e)
+		return o.blockHeld(r, e, start)
 	}
-	if skipJudge || text == "" {
+	if skipJudge {
+		r.step(StageJudge, "approved", "approved "+approved.Ticket, start)
+		return Result{}, false
+	}
+	if text == "" {
+		r.step(StageJudge, "skip", "not triggered", start)
 		return Result{}, false
 	}
 	trigger := o.judgeTrigger(r, text)
 	if trigger == "" {
+		r.step(StageJudge, "skip", "not triggered", start)
 		return Result{}, false
 	}
 	v, err := o.cfg.Judge.Judge(ctx, text)
@@ -356,14 +384,17 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_unavailable", Sample: maskSample(err.Error())})
 		r.headers["X-Guardrail-Judge"] = "unavailable"
 		if o.cfg.JudgeFailClosed {
+			r.step(StageJudge, "error", "unavailable", start)
 			return o.fail(r, http.StatusServiceUnavailable, ActionBlock, StageJudge,
 				"the security judge is unavailable and policy requires its review; try again shortly"), true
 		}
+		r.step(StageJudge, "error", "unavailable", start)
 		return Result{}, false
 	}
 	r.headers["X-Guardrail-Judge"] = judgeHeader(v)
 	if !v.Escalate {
 		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_allow", Sample: trigger})
+		r.step(StageJudge, "pass", fmt.Sprintf("trigger %q → allow", triggerQuote(trigger)), start)
 		return Result{}, false
 	}
 	// The ticket derives from the content, so client retries and later turns
@@ -380,6 +411,7 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 		CreatedAt: time.Now().UnixMilli(),
 	})
 	if err != nil {
+		r.step(StageJudge, "error", "could not record hold", start)
 		return o.fail(r, http.StatusServiceUnavailable, ActionBlock, StageJudge,
 			"the security judge escalated this request but the hold could not be recorded; try again shortly"), true
 	}
@@ -387,19 +419,21 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_approved", Sample: stored.Ticket})
 		r.headers["X-Guardrail-Judge"] = "approved"
 		r.headers["X-Guardrail-Ticket"] = stored.Ticket
+		r.step(StageJudge, "approved", "approved "+stored.Ticket, start)
 		return Result{}, false
 	}
 	if stored.Status == HeldRejected {
-		return o.blockHeld(r, stored)
+		return o.blockHeld(r, stored, start)
 	}
 	r.headers["X-Guardrail-Ticket"] = stored.Ticket
 	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: stored.Ticket + " " + stored.Category + ": " + stored.Reason})
+	r.step(StageJudge, "block", judgeEscalateDetail(trigger, stored), start)
 	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge,
 		fmt.Sprintf("held for security review (ticket %s): %s", stored.Ticket, stored.Reason)), true
 }
 
 // blockHeld stops a turn that still contains pending or rejected content.
-func (o *Orchestrator) blockHeld(r *run, e Held) (Result, bool) {
+func (o *Orchestrator) blockHeld(r *run, e Held, start time.Time) (Result, bool) {
 	r.headers["X-Guardrail-Judge"] = "held"
 	r.headers["X-Guardrail-Ticket"] = e.Ticket
 	if e.Status == HeldRejected {
@@ -408,11 +442,13 @@ func (o *Orchestrator) blockHeld(r *run, e Held) (Result, bool) {
 			why = e.Reason
 		}
 		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_rejected", Score: 1, Sample: e.Ticket})
+		r.step(StageJudge, "block", "rejected "+e.Ticket, start)
 		return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge, fmt.Sprintf(
 			"rejected by SecOps (ticket %s): %s. Start a new conversation without it.",
 			e.Ticket, strings.TrimSuffix(why, "."))), true
 	}
 	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_held", Score: 1, Sample: e.Ticket})
+	r.step(StageJudge, "held", "held "+e.Ticket, start)
 	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge, fmt.Sprintf(
 		"held for security review (ticket %s): %s. This conversation still contains it; start a new one (/clear in Claude Code).",
 		e.Ticket, strings.TrimSuffix(e.Reason, "."))), true
@@ -461,13 +497,20 @@ func judgeHeader(v JudgeVerdict) string {
 
 // stageCache looks up the normalized prompt.
 func (o *Orchestrator) stageCache(r *run) (Result, bool) {
-	if o.cache == nil || !o.cfg.CacheEnabled || r.req.Stream || r.req.CacheBypass || (r.req.TemperatureSet && r.req.Temperature > 0.2) {
+	start := time.Now()
+	if o.cache == nil || !o.cfg.CacheEnabled {
+		r.step(StageCache, "skip", "off", start)
+		return Result{}, false
+	}
+	if r.req.Stream || r.req.CacheBypass || (r.req.TemperatureSet && r.req.Temperature > 0.2) {
+		r.step(StageCache, "skip", "bypass", start)
 		return Result{}, false
 	}
 	key := cache.Key(r.req.Text(), r.req.Model, r.req.Temperature)
 	r.cacheKey = key
 	body, status, ok := o.cache.Get(key)
 	if !ok {
+		r.step(StageCache, "miss", "miss", start)
 		return Result{}, false
 	}
 	// Cached bodies hold vault tokens, not raw values, so a hit restores the
@@ -488,6 +531,7 @@ func (o *Orchestrator) stageCache(r *run) (Result, bool) {
 	r.status = status
 	r.headers["X-Guardrail-Cache"] = "HIT"
 	r.headers["Content-Type"] = "application/json"
+	r.step(StageCache, "hit", fmt.Sprintf("hit, saved %d tokens", r.dec.EstimatedTokens), start)
 	return Result{
 		Status:      status,
 		Body:        body,
@@ -500,12 +544,15 @@ func (o *Orchestrator) stageCache(r *run) (Result, bool) {
 
 // stageBudget enforces limits and injects the soft nudge.
 func (o *Orchestrator) stageBudget(r *run) (Result, bool) {
+	start := time.Now()
 	if o.ledger == nil {
+		r.step(StageBudget, "skip", "off", start)
 		return Result{}, false
 	}
 	exceeded, reason, nudge := o.ledger.Check(r.req.Key, r.dec.EstimatedTokens, time.Now())
 	if exceeded {
 		r.headers["X-Guardrail-Budget"] = "exceeded"
+		r.step(StageBudget, "block", "ceiling reached", start)
 		return o.fail(r, http.StatusTooManyRequests, ActionBlock, StageBudget, reason), true
 	}
 	r.dec.Stage = StageBudget
@@ -516,22 +563,27 @@ func (o *Orchestrator) stageBudget(r *run) (Result, bool) {
 		r.req.Nudge = true
 		r.req.Messages = append([]Message{{Role: "system", Content: SoftNudgeText}}, r.req.Messages...)
 	}
+	r.step(StageBudget, "pass", o.budgetDetail(r), start)
 	return Result{}, false
 }
 
 // stageUpstream sends the request and runs the response stages.
 func (o *Orchestrator) stageUpstream(ctx context.Context, r *run, sink ResponseSink) Result {
+	start := time.Now()
 	adapter, ok := o.cfg.RouteFor(r.req.Route)
 	if !ok {
+		r.step("upstream", "error", "route not configured", start)
 		return o.fail(r, http.StatusBadGateway, ActionBlock, StageRoute, fmt.Sprintf("route %q is not configured", r.req.Route))
 	}
 	u, err := adapter.Prepare(r.req)
 	if err != nil {
+		r.step("upstream", "error", "could not prepare request", start)
 		return o.fail(r, http.StatusBadRequest, ActionBlock, StageRoute, err.Error())
 	}
 	r.upstream = upstreamShape(u.Wire)
 	resp, err := adapter.Do(ctx, u)
 	if err != nil {
+		r.step("upstream", "error", "upstream unreachable", start)
 		return o.fail(r, http.StatusBadGateway, ActionBlock, StageRoute, err.Error())
 	}
 	defer resp.Body.Close()
@@ -545,23 +597,26 @@ func (o *Orchestrator) stageUpstream(ctx context.Context, r *run, sink ResponseS
 			ct = "application/json"
 		}
 		r.headers["Content-Type"] = ct
+		r.step("upstream", "error", fmt.Sprintf("%s %d", r.req.Model, resp.StatusCode), start)
 		return Result{Status: resp.StatusCode, Body: body, Headers: r.headers}
 	}
 
 	if u.Stream && strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
-		return o.streamThrough(r, resp, sink)
+		return o.streamThrough(r, resp, sink, start)
 	}
-	return o.buffered(r, resp)
+	return o.buffered(r, resp, start)
 }
 
 // buffered reads the whole response, scans it, rewrites it, then stores it.
-func (o *Orchestrator) buffered(r *run, resp *http.Response) Result {
+func (o *Orchestrator) buffered(r *run, resp *http.Response, start time.Time) Result {
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
+		r.step("upstream", "error", "reading upstream response failed", start)
 		return o.fail(r, http.StatusBadGateway, ActionBlock, StageRoute, "reading upstream response: "+err.Error())
 	}
 	r.status = resp.StatusCode
 	r.headers["Content-Type"] = "application/json"
+	got := time.Now()
 
 	decoded, decErr := o.cfg.Encoding.Decode(r.upstream, r.shape, raw)
 	if decErr != nil {
@@ -569,6 +624,7 @@ func (o *Orchestrator) buffered(r *run, resp *http.Response) Result {
 		// there is nothing to scan or bill.
 		r.inputTok, r.outputTok = 0, 0
 		r.dec.Stage = StageResponseScan
+		r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, r.status, 0, 0, false), start, got)
 		return Result{Status: r.status, Body: raw, Headers: r.headers}
 	}
 	r.inputTok, r.outputTok = decoded.InputTokens, decoded.OutputTokens
@@ -576,18 +632,28 @@ func (o *Orchestrator) buffered(r *run, resp *http.Response) Result {
 	if r.shape == ShapeEmbedding {
 		r.dec.Stage = StageResponseScan
 		o.stageLedgerWrite(r)
+		r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, r.status, r.inputTok+r.outputTok, r.cost, false), start, got)
 		return Result{Status: r.status, Body: raw, Headers: r.headers}
 	}
 
+	scanStart := time.Now()
+	scanned := decoded.Text != "" && len(o.cfg.Detectors) > 0
 	if res, blocked := o.scanOutput(r, decoded.Text); blocked {
+		r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, r.status, r.inputTok+r.outputTok, 0, false), start, got)
+		r.step("response-scan", "block", scanBlockDetail(r.dec.RuleHits), scanStart)
 		return res
 	}
+	scanEnd := time.Now()
 	// The cache copy keeps vault tokens; the client copy gets the originals
 	// back. The cache therefore never holds the values it protects.
 	stored, client := o.tokenizeAndRewrite(r, decoded)
 	o.stageCacheWrite(r, stored)
 	o.stageLedgerWrite(r)
 	r.dec.Stage = StageRoute
+	r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, r.status, r.inputTok+r.outputTok, r.cost, false), start, got)
+	if scanned {
+		r.stepBetween("response-scan", "pass", "clean", scanStart, scanEnd)
+	}
 	return Result{Status: r.status, Body: client, Headers: r.headers}
 }
 
@@ -648,8 +714,9 @@ func (o *Orchestrator) stageLedgerWrite(r *run) {
 // Re-identification needs the whole text and the client has already seen the
 // chunks, so only the buffered copy is scanned. That is the trade-off
 // DESIGN.md documents, not an accident.
-func (o *Orchestrator) streamThrough(r *run, resp *http.Response, sink ResponseSink) Result {
+func (o *Orchestrator) streamThrough(r *run, resp *http.Response, sink ResponseSink, start time.Time) Result {
 	if sink == nil {
+		r.step("upstream", "error", "streaming unavailable", start)
 		return o.fail(r, http.StatusInternalServerError, ActionBlock, StageRoute, "streaming requested but the server cannot stream")
 	}
 	// The action headers have to be on the wire before the first chunk, so set
@@ -678,14 +745,28 @@ func (o *Orchestrator) streamThrough(r *run, resp *http.Response, sink ResponseS
 			break
 		}
 	}
+	got := time.Now()
 	full := acc.String()
 	r.inputTok, r.outputTok = usageFromSSE(r.shape, full)
-	if text := sseText(full); text != "" {
-		o.scanOutput(r, text)
+	text := sseText(full)
+	scanStart := time.Now()
+	scanned := text != "" && len(o.cfg.Detectors) > 0
+	if _, blocked := o.scanOutput(r, text); blocked {
+		r.status = resp.StatusCode
+		o.stageLedgerWrite(r)
+		r.dec.Stage = StageResponseScan
+		r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, resp.StatusCode, r.inputTok+r.outputTok, r.cost, true), start, got)
+		r.step("response-scan", "block", scanBlockDetail(r.dec.RuleHits), scanStart)
+		return Result{Status: resp.StatusCode, Body: nil, Headers: r.headers}
 	}
+	scanEnd := time.Now()
 	r.status = resp.StatusCode
 	o.stageLedgerWrite(r)
 	r.dec.Stage = StageResponseScan
+	r.stepBetween("upstream", "pass", upstreamDetail(r.req.Model, resp.StatusCode, r.inputTok+r.outputTok, r.cost, true), start, got)
+	if scanned {
+		r.stepBetween("response-scan", "pass", "clean", scanStart, scanEnd)
+	}
 	return Result{Status: resp.StatusCode, Body: nil, Headers: r.headers}
 }
 

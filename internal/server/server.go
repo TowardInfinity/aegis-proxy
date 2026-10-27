@@ -187,6 +187,12 @@ func (l ledgerAdapter) Price(model string) (float64, float64) {
 	return l.ledger.Price(model)
 }
 
+// DailyTokens is the ceiling and today's spend. A ceiling of 0 is unlimited.
+func (l ledgerAdapter) DailyTokens(key string) (ceiling, used int) {
+	_, used, _ = l.ledger.Spend(key)
+	return l.limitsFor(key).PerKeyDailyTok, used
+}
+
 func limitsFrom(b config.BudgetConfig) budget.Limits {
 	return budget.Limits{
 		PerKeyDailyUSD: b.PerKeyDailyUSD,

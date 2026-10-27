@@ -338,6 +338,91 @@ $("tabs").addEventListener("click", (e) => {
   aegis.onTick.push(async () => { await loadHeld(); });
 })();
 </script>
+<style>
+/* P2 trace */
+#rows tr[data-i] { cursor: pointer; }
+#trace-drawer { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, .35); }
+#trace-drawer[hidden] { display: none; }
+.trace-card { width: min(440px, 100%); height: 100%; overflow: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 16px 18px 32px; }
+.trace-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.trace-head h2 { margin: 0; font-size: 16px; }
+.trace-meta { display: grid; grid-template-columns: 6.5em 1fr; gap: 6px 10px; margin: 14px 0 18px; }
+.trace-meta dt { color: var(--muted); }
+.trace-meta dd { margin: 0; }
+.trace-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.trace-row { display: flex; align-items: center; gap: 8px; }
+.trace-row .num { margin-left: auto; color: var(--muted); }
+.trace-bar { height: 6px; background: var(--line); border-radius: 99px; margin: 6px 0 2px; }
+.trace-bar span { display: block; height: 100%; min-width: 4%; background: var(--held); border-radius: 99px; }
+.trace-detail { color: var(--muted); font-size: 13px; }
+.pill.skip { color: var(--muted); background: transparent; border: 1px solid var(--line); }
+</style>
+<script>
+/* P2 trace */
+(function () {
+  const drawer = document.createElement("div");
+  drawer.id = "trace-drawer";
+  drawer.hidden = true;
+  drawer.innerHTML = `<div class="trace-card" role="dialog" aria-label="Request trace">
+    <div class="trace-head"><h2>Request</h2><button type="button" id="trace-close">Close</button></div>
+    <dl class="trace-meta" id="trace-meta"></dl>
+    <div id="trace-body"></div>
+  </div>`;
+  document.body.appendChild(drawer);
+
+  function pill(outcome) {
+    if (outcome === "pass" || outcome === "hit" || outcome === "approved") return "pass";
+    if (outcome === "redact") return "redact";
+    if (outcome === "block" || outcome === "error") return "block";
+    if (outcome === "held") return "held";
+    return "skip";
+  }
+
+  // Shared with the playground so both timelines stay one implementation.
+  function traceHTML(steps) {
+    if (!steps || !steps.length) return `<p class="empty">no trace recorded</p>`;
+    const total = Math.max(steps.reduce((sum, s) => sum + (Number(s.ms) || 0), 0), 1);
+    return `<ol class="trace-steps">` + steps.map((s) => {
+      const w = Math.max(4, ((Number(s.ms) || 0) / total) * 100);
+      return `<li>
+        <div class="trace-row">
+          <span class="mono">${esc(s.stage)}</span>
+          <span class="pill ${pill(s.outcome)}">${esc(s.outcome)}</span>
+          <span class="num mono">${(Number(s.ms) || 0).toFixed(1)} ms</span>
+        </div>
+        <div class="trace-bar"><span style="width:${w}%"></span></div>
+        <div class="trace-detail">${esc(s.detail || "")}</div>
+      </li>`;
+    }).join("") + `</ol>`;
+  }
+  aegis.traceHTML = traceHTML;
+
+  function open(row) {
+    const [cls, txt] = decision(row);
+    document.getElementById("trace-meta").innerHTML = `
+      <dt>Request</dt><dd class="mono">${esc(row.RequestID || "—")}</dd>
+      <dt>Employee</dt><dd>${esc(row.Key || "anonymous")}</dd>
+      <dt>Model</dt><dd class="mono">${esc(row.Model || "")}</dd>
+      <dt>Decision</dt><dd><span class="pill ${cls}">${esc(txt)}</span></dd>`;
+    document.getElementById("trace-body").innerHTML = traceHTML(row.Trace);
+    drawer.hidden = false;
+  }
+
+  function close() { drawer.hidden = true; }
+
+  document.getElementById("rows").addEventListener("click", (e) => {
+    if (e.target.closest("button, a, input, textarea")) return;
+    const tr = e.target.closest("tr[data-i]");
+    if (!tr) return;
+    const row = (aegis.rows || [])[Number(tr.dataset.i)];
+    if (!row) return;
+    open(row);
+  });
+  drawer.addEventListener("click", (e) => { if (e.target === drawer) close(); });
+  document.getElementById("trace-close").addEventListener("click", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !drawer.hidden) close(); });
+})();
+</script>
 <script>
 tick();
 </script>

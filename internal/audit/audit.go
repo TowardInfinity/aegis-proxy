@@ -16,7 +16,18 @@ type Hit struct {
 	Sample string  `json:"sample,omitempty"`
 }
 
-// Row is one audited request.
+// TraceStep is one pipeline stage. It lives here, not in pipeline, so the
+// audit row can store it without an import cycle. Details are short and
+// never include a raw detected value.
+type TraceStep struct {
+	Stage   string  `json:"stage"`
+	Outcome string  `json:"outcome"`
+	MS      float64 `json:"ms"`
+	Detail  string  `json:"detail"`
+}
+
+// Row is one audited request. Fields stay untagged so the ledger JSON keeps
+// the historical names (TS, Key, RequestID).
 type Row struct {
 	TS           time.Time
 	Key          string
@@ -32,6 +43,8 @@ type Row struct {
 	CacheHit     bool
 	SavedTokens  int
 	SavedUSD     float64
+	RequestID    string
+	Trace        []TraceStep
 }
 
 // Batch is the size the logger flushes at.
@@ -105,8 +118,8 @@ func Insert(db *sql.DB, rows []Row) error {
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT INTO audit
-		(ts, "key", route, model, action, stage, rule_hits, latency_ms, input_tokens, output_tokens, cost_usd, cache_hit, saved_tokens, saved_usd)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		(ts, "key", route, model, action, stage, rule_hits, latency_ms, input_tokens, output_tokens, cost_usd, cache_hit, saved_tokens, saved_usd, request_id, trace)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -117,12 +130,16 @@ func Insert(db *sql.DB, rows []Row) error {
 		if r.RuleHits == nil {
 			hits = []byte("[]")
 		}
+		trace, _ := json.Marshal(r.Trace)
+		if r.Trace == nil {
+			trace = []byte("[]")
+		}
 		cacheHit := 0
 		if r.CacheHit {
 			cacheHit = 1
 		}
 		if _, err := stmt.Exec(r.TS.Unix(), r.Key, r.Route, r.Model, string(r.Action), r.Stage, string(hits),
-			r.LatencyMS, r.InputTokens, r.OutputTokens, r.CostUSD, cacheHit, r.SavedTokens, r.SavedUSD); err != nil {
+			r.LatencyMS, r.InputTokens, r.OutputTokens, r.CostUSD, cacheHit, r.SavedTokens, r.SavedUSD, r.RequestID, string(trace)); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -204,7 +221,7 @@ func Recent(db *sql.DB, limit int) ([]Row, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := db.Query(`SELECT ts, "key", route, model, action, stage, rule_hits, latency_ms, input_tokens, output_tokens, cost_usd, cache_hit, saved_tokens, saved_usd
+	rows, err := db.Query(`SELECT ts, "key", route, model, action, stage, rule_hits, latency_ms, input_tokens, output_tokens, cost_usd, cache_hit, saved_tokens, saved_usd, request_id, trace
 		FROM audit ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -218,15 +235,19 @@ func Recent(db *sql.DB, limit int) ([]Row, error) {
 			hits     string
 			cacheHit int
 			action   string
+			trace    string
 		)
 		if err := rows.Scan(&ts, &r.Key, &r.Route, &r.Model, &action, &r.Stage, &hits,
-			&r.LatencyMS, &r.InputTokens, &r.OutputTokens, &r.CostUSD, &cacheHit, &r.SavedTokens, &r.SavedUSD); err != nil {
+			&r.LatencyMS, &r.InputTokens, &r.OutputTokens, &r.CostUSD, &cacheHit, &r.SavedTokens, &r.SavedUSD, &r.RequestID, &trace); err != nil {
 			return nil, err
 		}
 		r.TS = time.Unix(ts, 0)
 		r.Action = action
 		r.CacheHit = cacheHit == 1
 		_ = json.Unmarshal([]byte(hits), &r.RuleHits)
+		if trace != "" && trace != "[]" && trace != "null" {
+			_ = json.Unmarshal([]byte(trace), &r.Trace)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
