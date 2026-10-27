@@ -27,4 +27,4 @@ Checklist:
 - [ ] Parent review + verify on real binary
 - [ ] Commit + merge
 - [ ] README + demo polish
-- [ ] Research subagent: embedded small-model classification (Laya / ONNX / injection classifiers) — running in background; fold findings into DESIGN.md + README after build lands
+- [x] Research subagent: embedded small-model classification — done; verdict folded into DESIGN.md. Laya rejected (1.6 GB, slow, recall 0.72/FPR 0.21), Jev is closed/commercial, PII stays regex, ML = optional embedded ONNX advisor (Wolf Defender 96 MB int8, ~400 MB RSS total) off the request path, config-gated, default off.
