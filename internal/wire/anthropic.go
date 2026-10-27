@@ -106,9 +106,7 @@ func BuildAnthropicRequest(req *pipeline.Request, model string, maxTokens int) (
 			system = append(system, m.Content)
 			continue
 		}
-		s := m.Content
 		content, _ := json.Marshal([]AnthropicBlock{{Type: "text", Text: m.Content}})
-		_ = s
 		msgs = append(msgs, AnthropicMessage{Role: m.Role, Content: content})
 	}
 	if len(msgs) == 0 {
@@ -121,10 +119,8 @@ func BuildAnthropicRequest(req *pipeline.Request, model string, maxTokens int) (
 		Stream:    req.Stream,
 		StopSeq:   req.Stop,
 	}
-	if req.Temperature != 0 || req.Temperature >= 0 {
-		t := req.Temperature
-		body.Temperature = &t
-	}
+	temp := req.Temperature
+	body.Temperature = &temp
 	if len(system) > 0 {
 		sys, _ := json.Marshal(strings.Join(system, "\n\n"))
 		body.System = sys

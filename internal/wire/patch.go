@@ -3,6 +3,7 @@ package wire
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"guardrail/internal/pipeline"
 )
@@ -48,14 +49,15 @@ func patchOpenAI(shape pipeline.Shape, raw []byte, req *pipeline.Request, model 
 		if err := json.Unmarshal(doc["messages"], &msgs); err != nil {
 			return nil, fmt.Errorf("messages: %w", err)
 		}
-		texts := messageTexts(req)
+		// req.Messages is index-aligned with the raw messages for this shape,
+		// system turns included, because ParseOpenAI kept the order.
 		for i := range msgs {
-			if i >= len(texts) {
+			if i >= len(req.Messages) {
 				break
 			}
 			// Preserve the multipart form (images, tool results) by editing
 			// only the text parts inside it.
-			msgs[i]["content"] = replaceContent(msgs[i]["content"], texts[i])
+			msgs[i]["content"] = replaceContent(msgs[i]["content"], req.Messages[i].Content)
 		}
 		if req.Nudge {
 			nudge := map[string]json.RawMessage{
@@ -96,7 +98,6 @@ func patchAnthropic(raw []byte, req *pipeline.Request, model string, maxTokens i
 	}
 	// Internal messages put system turns first, so the split is positional and
 	// matches the order the client sent.
-	texts := messageTexts(req)
 	idx := 0
 	for _, m := range req.Messages {
 		if m.Role == "system" {
@@ -108,32 +109,16 @@ func patchAnthropic(raw []byte, req *pipeline.Request, model string, maxTokens i
 		}
 		idx++
 	}
-	_ = texts
 	doc["messages"] = mustJSON(msgs)
+	// The internal message list is the source of truth after redaction, so
+	// rebuild system from it. Appending to the original would duplicate the
+	// client's system prompt on every request.
 	if len(system) > 0 {
-		doc["system"] = replaceAnthropicSystem(doc["system"], system)
+		doc["system"] = mustJSON(strings.Join(system, "\n\n"))
+	} else {
+		delete(doc, "system")
 	}
 	return json.Marshal(doc)
-}
-
-func replaceAnthropicSystem(existing json.RawMessage, system []string) json.RawMessage {
-	joined := ""
-	for i, s := range system {
-		if i > 0 {
-			joined += "\n\n"
-		}
-		joined += s
-	}
-	var asString string
-	if len(existing) > 0 && json.Unmarshal(existing, &asString) == nil && asString != "" {
-		return mustJSON(asString + "\n\n" + joined)
-	}
-	var blocks []AnthropicBlock
-	if len(existing) > 0 && json.Unmarshal(existing, &blocks) == nil && len(blocks) > 0 {
-		blocks = append(blocks, AnthropicBlock{Type: "text", Text: joined})
-		return mustJSON(blocks)
-	}
-	return mustJSON(joined)
 }
 
 // replaceContent keeps a plain string a plain string, and edits the text parts
@@ -194,17 +179,6 @@ func replacePrompt(existing json.RawMessage, text string) json.RawMessage {
 		return mustJSON(list)
 	}
 	return mustJSON(text)
-}
-
-func messageTexts(req *pipeline.Request) []string {
-	out := make([]string, 0, len(req.Messages))
-	for _, m := range req.Messages {
-		if m.Role == "system" {
-			continue
-		}
-		out = append(out, m.Content)
-	}
-	return out
 }
 
 func firstUserText(req *pipeline.Request) string {

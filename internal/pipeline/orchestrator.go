@@ -451,6 +451,10 @@ func (o *Orchestrator) streamThrough(r *run, resp *http.Response, sink ResponseS
 	if sink == nil {
 		return o.fail(r, http.StatusInternalServerError, ActionBlock, StageRoute, "streaming requested but the server cannot stream")
 	}
+	// The action headers have to be on the wire before the first chunk, so set
+	// them here rather than in finish, which runs after the stream is sent.
+	r.headers["X-Guardrail-Action"] = string(r.dec.Action)
+	r.headers["X-Guardrail-Stage"] = StageResponseScan
 	for k, v := range r.headers {
 		sink.Header()[k] = v
 	}

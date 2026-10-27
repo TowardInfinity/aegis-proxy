@@ -122,23 +122,26 @@ func (l *Ledger) Check(key string, limits Limits, estimated int, now time.Time) 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.roll(now)
-	t := l.keys[key]
-	if t == nil {
-		return false, "", false
+	// A key with no spend yet still has to face the ceilings: the first request
+	// may ask for more than the whole day's token allowance.
+	var dailyUSD float64
+	var dailyTok, hourTok int
+	if t := l.keys[key]; t != nil {
+		dailyUSD, dailyTok, hourTok = t.dailyUSD, t.dailyTok, t.hourTok
 	}
-	if limits.PerKeyDailyUSD > 0 && t.dailyUSD >= limits.PerKeyDailyUSD {
-		return true, fmt.Sprintf("per-key daily USD ceiling %.2f reached (%.2f spent)", limits.PerKeyDailyUSD, t.dailyUSD), false
+	if limits.PerKeyDailyUSD > 0 && dailyUSD >= limits.PerKeyDailyUSD {
+		return true, fmt.Sprintf("per-key daily USD ceiling %.2f reached (%.2f spent)", limits.PerKeyDailyUSD, dailyUSD), false
 	}
-	if limits.PerKeyDailyTok > 0 && t.dailyTok+estimated > limits.PerKeyDailyTok {
-		return true, fmt.Sprintf("per-key daily token ceiling %d would be exceeded (%d used, %d requested)", limits.PerKeyDailyTok, t.dailyTok, estimated), false
+	if limits.PerKeyDailyTok > 0 && dailyTok+estimated > limits.PerKeyDailyTok {
+		return true, fmt.Sprintf("per-key daily token ceiling %d would be exceeded (%d used, %d requested)", limits.PerKeyDailyTok, dailyTok, estimated), false
 	}
-	if limits.HourlyTok > 0 && t.hourTok+estimated > limits.HourlyTok {
-		return true, fmt.Sprintf("per-key hourly token ceiling %d would be exceeded (%d used, %d requested)", limits.HourlyTok, t.hourTok, estimated), false
+	if limits.HourlyTok > 0 && hourTok+estimated > limits.HourlyTok {
+		return true, fmt.Sprintf("per-key hourly token ceiling %d would be exceeded (%d used, %d requested)", limits.HourlyTok, hourTok, estimated), false
 	}
 	if limits.GlobalDailyUSD > 0 && l.globUSD >= limits.GlobalDailyUSD {
 		return true, fmt.Sprintf("global daily USD ceiling %.2f reached (%.2f spent)", limits.GlobalDailyUSD, l.globUSD), false
 	}
-	nudge = limits.SoftNudge && limits.PerKeyDailyUSD > 0 && t.dailyUSD >= 0.8*limits.PerKeyDailyUSD
+	nudge = limits.SoftNudge && limits.PerKeyDailyUSD > 0 && dailyUSD >= 0.8*limits.PerKeyDailyUSD
 	return false, "", nudge
 }
 
