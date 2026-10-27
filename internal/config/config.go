@@ -104,6 +104,14 @@ type BudgetConfig struct {
 	PerKeyDailyUSD float64                  `yaml:"per_key_daily_usd"`
 	PerKeyDailyTok int                      `yaml:"per_key_daily_tokens"`
 	Pricing        map[string]PricingConfig `yaml:"pricing"`
+	// KeyOverrides gives named employees their own daily ceilings. A zero
+	// field keeps the per-key default.
+	KeyOverrides map[string]KeyBudget `yaml:"key_overrides"`
+}
+
+type KeyBudget struct {
+	DailyUSD    float64 `yaml:"daily_usd"`
+	DailyTokens int     `yaml:"daily_tokens"`
 }
 
 type PricingConfig struct {

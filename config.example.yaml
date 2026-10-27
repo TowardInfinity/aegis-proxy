@@ -91,6 +91,9 @@ budget:
   hourly_tokens: 400000                 # per key
   per_key_daily_usd: 10.0
   per_key_daily_tokens: 400000
+  # Per-employee ceilings that replace the per-key defaults above.
+  key_overrides:
+    "emp-intern": {daily_tokens: 1500}
   # USD per million tokens, used for estimates and ledger costs. Keyed by the
   # model name the client sends (before model_map), so price aliases too.
   pricing:

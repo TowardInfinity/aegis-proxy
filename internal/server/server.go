@@ -123,7 +123,7 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 		JudgeTriggers:   cfg.Judge.Triggers,
 		JudgeAlways:     cfg.Judge.Always,
 		JudgeFailClosed: cfg.Judge.FailClosed,
-	}, c, ledgerAdapter{ledger: ledger, limits: limitsFrom(cfg.Budget)}, limiter)
+	}, c, ledgerAdapter{ledger: ledger, limits: limitsFrom(cfg.Budget), overrides: cfg.Budget.KeyOverrides}, limiter)
 	return s, nil
 }
 
@@ -148,12 +148,27 @@ func judgeFrom(j config.JudgeConfig) pipeline.Judge {
 // ledgerAdapter binds the configured limits to the checks the pipeline makes,
 // so the orchestrator never needs to know about budget config.
 type ledgerAdapter struct {
-	ledger *budget.Ledger
-	limits budget.Limits
+	ledger    *budget.Ledger
+	limits    budget.Limits
+	overrides map[string]config.KeyBudget
 }
 
 func (l ledgerAdapter) Check(key string, estimated int, now time.Time) (bool, string, bool) {
-	return l.ledger.Check(key, l.limits, estimated, now)
+	return l.ledger.Check(key, l.limitsFor(key), estimated, now)
+}
+
+// limitsFor applies a key's override on top of the per-key defaults.
+func (l ledgerAdapter) limitsFor(key string) budget.Limits {
+	lim := l.limits
+	if o, ok := l.overrides[key]; ok {
+		if o.DailyUSD > 0 {
+			lim.PerKeyDailyUSD = o.DailyUSD
+		}
+		if o.DailyTokens > 0 {
+			lim.PerKeyDailyTok = o.DailyTokens
+		}
+	}
+	return lim
 }
 
 func (l ledgerAdapter) Record(key, model string, input, output int) float64 {
