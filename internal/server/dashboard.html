@@ -51,6 +51,11 @@ form { display: flex; gap: 8px; padding: 24px; }
 form[hidden] { display: none; }
 input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
 button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink); color: var(--bg); font-weight: 600; }
+.tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { background: none; color: var(--muted); border-radius: 0; padding: 10px 12px; border-bottom: 2px solid transparent; font-weight: 600; white-space: nowrap; }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+.tabs .badge { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--held-bg); color: var(--held); font-size: 11px; }
+.panel[hidden] { display: none; }
 @media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } .hide-sm { display: none; } }
 </style>
 </head>
@@ -60,11 +65,13 @@ button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink
   <span class="sub">Every AI request from every tool, as it happens</span>
   <span class="live"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
 </header>
+<nav class="tabs" id="tabs"></nav>
 <main>
   <form id="login" hidden>
     <input id="tok" type="password" placeholder="Admin token (GUARDRAIL_ADMIN_TOKEN)" autocomplete="off">
     <button>Open</button>
   </form>
+  <section class="panel" data-tab="ledger" data-title="Live ledger">
   <section class="tiles" id="tiles"></section>
   <section class="card">
     <table>
@@ -75,6 +82,16 @@ button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink
       <tbody id="rows"><tr><td colspan="8" class="empty">Waiting for traffic…</td></tr></tbody>
     </table>
   </section>
+  </section>
+
+  <!-- P1 approvals: fill this panel, set data-ready, keep code in its own <style>/<script> block below. -->
+  <section class="panel" data-tab="approvals" data-title="Approvals" hidden></section>
+  <!-- P3 playground -->
+  <section class="panel" data-tab="playground" data-title="Playground" hidden></section>
+  <!-- P4 usage -->
+  <section class="panel" data-tab="usage" data-title="Usage" hidden></section>
+  <!-- P4 policy -->
+  <section class="panel" data-tab="policy" data-title="Policy" hidden></section>
 </main>
 <script>
 // The page carries no data. It reads the admin token from the URL fragment
@@ -85,12 +102,18 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let seen = new Set();
 
+// Shared hooks for the feature blocks below. Each feature registers a panel
+// renderer with aegis.onTick and sets data-ready on its panel to show its tab.
+// aegis.rows is the latest /ledger page; <tr data-i> indexes into it.
+const aegis = { get: null, esc, onTick: [], badge: {}, rows: [] };
+
 $("login").addEventListener("submit", (e) => {
   e.preventDefault(); token = $("tok").value.trim();
   try { sessionStorage.setItem("aegis-token", token); } catch (e) {}
   $("login").hidden = true; tick();
 });
 
+aegis.get = get;
 async function get(path) {
   const r = await fetch(path, { headers: { Authorization: "Bearer " + token } });
   if (!r.ok) throw new Error(r.status);
@@ -143,12 +166,12 @@ function tiles(s, rows) {
 function render(rows) {
   if (!rows.length) return;
   const fresh = seen.size > 0;
-  $("rows").innerHTML = rows.map((r) => {
+  $("rows").innerHTML = rows.map((r, i) => {
     const id = r.TS + r.Key + r.LatencyMS;
     const isNew = fresh && !seen.has(id);
     const [cls, txt] = decision(r);
     const t = new Date(r.TS);
-    return `<tr class="${isNew ? "new" : ""}">
+    return `<tr data-i="${i}" class="${isNew ? "new" : ""}">
       <td class="mono">${t.toLocaleTimeString()}</td>
       <td>${esc(r.Key || "anonymous")}</td>
       <td><span class="pill ${cls}">${txt}</span></td>
@@ -166,7 +189,10 @@ async function tick() {
   try {
     const [s, l] = await Promise.all([get("/stats"), get("/ledger?limit=50")]);
     const rows = l.rows || [];
+    aegis.rows = rows;
     tiles(s, rows); render(rows);
+    for (const fn of aegis.onTick) { try { await fn(s, rows); } catch (e) { console.error(e); } }
+    drawTabs();
     $("status").textContent = "live · " + new Date().toLocaleTimeString(); $("dot").className = "dot";
   } catch (e) {
     $("status").textContent = e.message === "404" ? "wrong token" : "proxy unreachable";
@@ -175,6 +201,26 @@ async function tick() {
   }
   setTimeout(tick, 2000);
 }
+function drawTabs() {
+  let cur = "ledger";
+  try { cur = sessionStorage.getItem("aegis-tab") || "ledger"; } catch (e) {}
+  const panels = [...document.querySelectorAll(".panel")].filter((p) => p.dataset.tab === "ledger" || p.dataset.ready !== undefined);
+  if (!panels.some((p) => p.dataset.tab === cur)) cur = "ledger";
+  $("tabs").innerHTML = panels.map((p) => {
+    const n = aegis.badge[p.dataset.tab];
+    return `<button data-tab="${p.dataset.tab}" class="${p.dataset.tab === cur ? "on" : ""}">${esc(p.dataset.title)}${n ? `<span class="badge">${n}</span>` : ""}</button>`;
+  }).join("");
+  for (const p of document.querySelectorAll(".panel")) p.hidden = p.dataset.tab !== cur;
+}
+$("tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (!b) return;
+  try { sessionStorage.setItem("aegis-tab", b.dataset.tab); } catch (e) {}
+  drawTabs();
+});
+</script>
+<!-- Feature scripts go below, one <script> block per packet, after the shared hooks. -->
+<script>
 tick();
 </script>
 </body>
