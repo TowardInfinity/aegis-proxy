@@ -82,12 +82,13 @@ func TestE2EJudgeUnavailableFailsOpenOrClosed(t *testing.T) {
 	down := &fakeJudge{err: errors.New("connection refused")}
 
 	open := newHarness(t, nil, &stubLedger{}, withJudge(down, false))
-	if res := open.orch.Execute(context.Background(), chatRequest(t, "confidential roadmap notes"), nil); res.Status != http.StatusOK {
-		t.Fatalf("fail-open status = %d", res.Status)
+	res := open.orch.Execute(context.Background(), chatRequest(t, "confidential roadmap notes"), nil)
+	if res.Status != http.StatusOK || res.Headers["X-Guardrail-Judge"] != "unavailable" {
+		t.Fatalf("fail-open status = %d judge header = %q", res.Status, res.Headers["X-Guardrail-Judge"])
 	}
 
 	closed := newHarness(t, nil, &stubLedger{}, withJudge(down, true))
-	res := closed.orch.Execute(context.Background(), chatRequest(t, "confidential roadmap notes"), nil)
+	res = closed.orch.Execute(context.Background(), chatRequest(t, "confidential roadmap notes"), nil)
 	if res.Status != http.StatusServiceUnavailable || closed.up.CallCount() != 0 {
 		t.Fatalf("fail-closed status = %d calls = %d", res.Status, closed.up.CallCount())
 	}

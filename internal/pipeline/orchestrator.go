@@ -322,6 +322,7 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 	v, err := o.cfg.Judge.Judge(ctx, text)
 	if err != nil {
 		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_unavailable", Sample: maskSample(err.Error())})
+		r.headers["X-Guardrail-Judge"] = "unavailable"
 		if o.cfg.JudgeFailClosed {
 			return o.fail(r, http.StatusServiceUnavailable, ActionBlock, StageJudge,
 				"the security judge is unavailable and policy requires its review; try again shortly"), true
