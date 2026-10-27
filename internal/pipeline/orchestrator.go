@@ -260,7 +260,7 @@ func (o *Orchestrator) stageRedact(r *run) (Result, bool) {
 
 // stageCache looks up the normalized prompt.
 func (o *Orchestrator) stageCache(r *run) (Result, bool) {
-	if o.cache == nil || !o.cfg.CacheEnabled || r.req.Stream || r.req.CacheBypass || r.req.Temperature > 0.2 {
+	if o.cache == nil || !o.cfg.CacheEnabled || r.req.Stream || r.req.CacheBypass || (r.req.TemperatureSet && r.req.Temperature > 0.2) {
 		return Result{}, false
 	}
 	key := cache.Key(r.req.Text(), r.req.Model, r.req.Temperature)

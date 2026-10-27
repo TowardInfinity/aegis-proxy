@@ -98,6 +98,7 @@ func ParseOpenAI(raw []byte, shape pipeline.Shape) (*pipeline.Request, error) {
 	}
 	if body.Temperature != nil {
 		req.Temperature = *body.Temperature
+		req.TemperatureSet = true
 	} else {
 		req.Temperature = 1.0
 	}

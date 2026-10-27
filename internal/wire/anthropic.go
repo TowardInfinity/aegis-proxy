@@ -64,6 +64,7 @@ func ParseAnthropic(raw []byte) (*pipeline.Request, error) {
 	}
 	if body.Temperature != nil {
 		req.Temperature = *body.Temperature
+		req.TemperatureSet = true
 	}
 	if sys := anthropicText(body.System); sys != "" {
 		req.Messages = append(req.Messages, pipeline.Message{Role: "system", Content: sys})

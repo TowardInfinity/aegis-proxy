@@ -36,7 +36,10 @@ type Request struct {
 	Messages    []Message
 	MaxTokens   int
 	Temperature float64
-	Stream      bool
+	// TemperatureSet distinguishes an explicit caller temperature from the
+	// wire-layer default, so cache keys can ignore defaulted values.
+	TemperatureSet bool
+	Stream         bool
 	Stop        []string
 	RawBody     []byte
 	CacheBypass bool

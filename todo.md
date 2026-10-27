@@ -21,10 +21,10 @@ Throughput checkpoint:
 Checklist:
 - [x] Design doc (DESIGN.md) — modified idea
 - [x] git init + scaffold commit
-- [ ] Delegate implements core packages (running in background)
-- [ ] Delegate implements proxy HTTP layer + cmds + config example
-- [ ] Delegate implements tests + e2e smoke test
-- [ ] Parent review + verify on real binary
-- [ ] Commit + merge
-- [ ] README + demo polish
+- [x] Delegate implements core packages
+- [x] Delegate implements proxy HTTP layer + cmds + config example
+- [x] Delegate implements tests + e2e smoke test
+- [x] Parent review + verify on real binary (live demo: redaction round trip, cache hit, budget 429, injection 403, admin 404 — all verified)
+- [x] Commit + merge
+- [x] README + demo polish
 - [x] Research subagent: embedded small-model classification — done; verdict folded into DESIGN.md. Laya rejected (1.6 GB, slow, recall 0.72/FPR 0.21), Jev is closed/commercial, PII stays regex, ML = optional embedded ONNX advisor (Wolf Defender 96 MB int8, ~400 MB RSS total) off the request path, config-gated, default off.
