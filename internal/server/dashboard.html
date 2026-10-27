@@ -40,7 +40,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
 tr.new { animation: flash 1.2s ease-out; }
 @keyframes flash { from { background: var(--held-bg); } to { background: transparent; } }
 .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-.pass { color: var(--pass); background: var(--pass-bg); } .redact { color: var(--redact); background: var(--redact-bg); }
+.pass { color: var(--pass); background: var(--pass-bg); } .pill.cache { color: var(--held); background: transparent; border: 1px solid var(--held); } .redact { color: var(--redact); background: var(--redact-bg); }
 .block { color: var(--block); background: var(--block-bg); } .held { color: var(--held); background: var(--held-bg); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); }
@@ -204,6 +204,7 @@ function decision(row) {
   if (hits.some((h) => h.rule === "judge_escalate" || h.rule === "judge_held")) return ["held", "held for review"];
   if (row.Action === "block") return ["block", "blocked"];
   if (row.Action === "redact") return ["redact", "redacted"];
+  if (row.CacheHit || row.Action === "cache_hit") return ["cache", "cache hit"];
   return ["pass", "passed"];
 }
 
@@ -258,7 +259,7 @@ function render(rows) {
       <td class="mono hide-sm">${esc(r.Model)}</td>
       <td class="num hide-sm">${(r.InputTokens + r.OutputTokens).toLocaleString()}</td>
       <td class="num">${r.LatencyMS} ms</td>
-      <td class="num hide-sm">$${r.CostUSD.toFixed(5)}</td></tr>`;
+      <td class="num hide-sm">${r.CacheHit ? `$0 <span class="sub">saved $${(r.SavedUSD || 0).toFixed(5)}</span>` : `$${r.CostUSD.toFixed(5)}`}</td></tr>`;
   }).join("");
   seen = new Set(rows.map((r) => r.TS + r.Key + r.LatencyMS));
 }
@@ -601,7 +602,7 @@ $("tabs").addEventListener("click", (e) => {
 .p4-chart .zero { fill: var(--line); }
 .p4-chart text { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
 .p4-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.p4-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.p4-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .p4-emp { margin: 8px 0 12px; }
 .p4-name { font-family: var(--mono); font-size: 12px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .p4-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }

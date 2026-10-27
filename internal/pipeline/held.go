@@ -161,8 +161,12 @@ func (h *heldStore) evictLocked() {
 	for len(h.byHash) >= heldLimit {
 		var oldest Held
 		first := true
+		// Decided rows go first, so a pending review is never dropped while
+		// a decided one remains.
 		for _, e := range h.byHash {
-			if first || e.CreatedAt < oldest.CreatedAt || (e.CreatedAt == oldest.CreatedAt && e.Hash < oldest.Hash) {
+			older := e.CreatedAt < oldest.CreatedAt || (e.CreatedAt == oldest.CreatedAt && e.Hash < oldest.Hash)
+			decided, oldestDecided := e.Status != HeldPending, oldest.Status != HeldPending
+			if first || (decided && !oldestDecided) || (decided == oldestDecided && older) {
 				oldest = e
 				first = false
 			}
@@ -229,8 +233,8 @@ func (h *heldStore) Decide(ticket, status, by, note string) (Held, error) {
 	e.DecidedBy = by
 	e.Note = note
 	if h.db != nil {
-		res, err := h.db.Exec(`UPDATE held SET status = ?, decided_at = ?, decided_by = ?, note = ? WHERE ticket = ? AND status = ?`,
-			e.Status, e.DecidedAt, e.DecidedBy, e.Note, ticket, HeldPending)
+		res, err := h.db.Exec(`UPDATE held SET status = ?, decided_at = ?, decided_by = ?, note = ? WHERE hash = ? AND status = ?`,
+			e.Status, e.DecidedAt, e.DecidedBy, e.Note, hash, HeldPending)
 		if err != nil {
 			return Held{}, err
 		}

@@ -170,4 +170,14 @@ func TestEmployeeTicketIsScopedToKey(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("other employee = %d %s", rec.Code, rec.Body)
 	}
+	if _, err := s.held.Add(pipeline.Held{
+		Hash: "bb", Ticket: "SEC-ANON0001", Key: "anonymous", Status: pipeline.HeldPending, CreatedAt: 11,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tickets/SEC-ANON0001", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("keyless caller = %d %s", rec.Code, rec.Body)
+	}
 }

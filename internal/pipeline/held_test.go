@@ -127,3 +127,52 @@ func TestHeldDecisionSurvivesReopen(t *testing.T) {
 		t.Fatal("hash missing after reopen")
 	}
 }
+
+func TestHeldCapKeepsPendingOverDecided(t *testing.T) {
+	h := NewMemoryHeld()
+	for i := 0; i < heldLimit; i++ {
+		if _, err := h.Add(Held{Hash: fmt.Sprintf("%064x", i), Ticket: fmt.Sprintf("SEC-%08d", i), Status: HeldPending, CreatedAt: int64(i + 1)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.Decide(fmt.Sprintf("SEC-%08d", 500), HeldApproved, "secops", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Add(Held{Hash: strings.Repeat("f", 64), Ticket: "SEC-NEW", Status: HeldPending, CreatedAt: int64(heldLimit + 5)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.Lookup(fmt.Sprintf("%064x", 500)); ok {
+		t.Fatal("decided row kept while a pending row was dropped")
+	}
+	if _, ok := h.Lookup(fmt.Sprintf("%064x", 0)); !ok {
+		t.Fatal("oldest pending row dropped")
+	}
+}
+
+func TestHeldDecideTouchesOnlyItsHash(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "guardrail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`INSERT INTO held (hash, ticket, key, category, reason, status, created_at) VALUES ('b', 'SEC-SAME', 'emp-b', '', 'other text', 'pending', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	h, err := OpenHeld(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Add(Held{Hash: "a", Ticket: "SEC-SAME", Key: "emp-a", Status: HeldPending, CreatedAt: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Decide("SEC-SAME", HeldApproved, "secops", ""); err != nil {
+		t.Fatal(err)
+	}
+	var approved int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM held WHERE ticket = 'SEC-SAME' AND status = 'approved'`).Scan(&approved); err != nil {
+		t.Fatal(err)
+	}
+	if approved != 1 {
+		t.Fatalf("one review approved %d rows sharing the ticket", approved)
+	}
+}

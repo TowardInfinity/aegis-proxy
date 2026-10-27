@@ -121,6 +121,10 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) pipeline.R
 		Body:    []byte(`{"error":"not found"}`),
 		Headers: map[string]string{"Content-Type": "application/json"},
 	}
+	// Without a key every caller shares "anonymous", so ownership proves nothing.
+	if key == "anonymous" {
+		return notFound
+	}
 	e, ok := s.held.ByTicket(r.PathValue("ticket"))
 	if !ok || subtle.ConstantTimeCompare([]byte(e.Key), []byte(key)) != 1 {
 		return notFound
