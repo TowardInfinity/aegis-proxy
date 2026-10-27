@@ -39,9 +39,21 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=emp-alice \
 ## pi
 
 Merge `pi/models.json` into `~/.pi/agent/models.json`, then choose a model from
-the `aegis-anthropic` or `aegis-aipro` provider. `apiKey` names the environment
-variable that holds the employee token. This file hasn't been tested with a
-live pi session yet.
+the `aegis-anthropic` or `aegis-aipro` provider. `apiKey` reads the employee
+token from `$AEGIS_EMPLOYEE_TOKEN`; pi also accepts `"!command"` to run a token
+helper instead. Tested with pi 1.4.0 against a local proxy: secrets in files
+pi read were redacted, a confidential board pack was held with a ticket, and
+both providers' requests appear in the ledger under the employee token.
+
+Quick test without touching your pi config (`PI_CODING_AGENT_DIR` points pi at
+another config directory):
+
+```bash
+mkdir -p /tmp/pi-aegis
+sed 's#https://aegis.corp.example#http://localhost:8080#' pi/models.json > /tmp/pi-aegis/models.json
+PI_CODING_AGENT_DIR=/tmp/pi-aegis AEGIS_EMPLOYEE_TOKEN=emp-priya \
+  pi -p --model aegis-aipro/aipro-chat "hello"
+```
 
 ## AIPro and other OpenAI-compatible clients
 
