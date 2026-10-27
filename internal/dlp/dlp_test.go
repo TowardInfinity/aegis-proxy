@@ -150,3 +150,24 @@ func TestScanPrefersLongerOverlap(t *testing.T) {
 		}
 	}
 }
+
+// Agents put today's date and version strings in their system prompts; none of
+// them may be tokenized as a phone number.
+func TestPhoneIgnoresDatesAndVersions(t *testing.T) {
+	for _, text := range []string{
+		"Current date: 2026-10-28",
+		"Today is 2026-10-28 01:20:33",
+		"due 28-10-2026",
+		"on 10/28/2026",
+		"released 2026.10.22",
+	} {
+		if got := scanOne(t, "phone", text); len(got) != 0 {
+			t.Errorf("false positive on %q: %+v", text, got)
+		}
+	}
+	for _, text := range []string{"call 415-555-0134", "ring 020 7946 0958", "+44 20 7946 0958"} {
+		if got := scanOne(t, "phone", text); len(got) == 0 {
+			t.Errorf("missed phone in %q", text)
+		}
+	}
+}
