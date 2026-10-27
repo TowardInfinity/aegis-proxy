@@ -135,6 +135,30 @@ func ParseOpenAI(raw []byte, shape pipeline.Shape) (*pipeline.Request, error) {
 	return req, nil
 }
 
+// BuildOpenAIRequest rebuilds an Anthropic-shaped internal request as an
+// OpenAI chat body. It is the mirror of BuildAnthropicRequest and only runs
+// when the client and the route speak different wires.
+func BuildOpenAIRequest(req *pipeline.Request, model string, maxTokens int) ([]byte, error) {
+	msgs := make([]OpenAIMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		encoded, _ := json.Marshal(m.Content)
+		msgs = append(msgs, OpenAIMessage{Role: m.Role, Content: encoded})
+	}
+	body := map[string]any{
+		"model":       model,
+		"messages":    msgs,
+		"max_tokens":  maxTokens,
+		"temperature": req.Temperature,
+	}
+	if req.Stream {
+		body["stream"] = true
+	}
+	if len(req.Stop) > 0 {
+		body["stop"] = req.Stop
+	}
+	return json.Marshal(body)
+}
+
 func defaultsRole(r string) string {
 	if r == "" {
 		return "user"
@@ -284,14 +308,8 @@ func (Encoder) ErrorBody(shape pipeline.Shape, message, typ string) []byte {
 	return ErrorBody(message, typ)
 }
 
-// ResponseText returns the assistant text of a response body.
-func (Encoder) ResponseText(shape pipeline.Shape, raw []byte) string {
-	if shape == pipeline.ShapeAnthropic {
-		text, _, _, err := ParseAnthropicResponse(raw)
-		if err != nil {
-			return ""
-		}
-		return text
-	}
-	return ResponseText(shape, raw)
+// Decode reduces a response body into the text, usage, and client-shape
+// encoder the pipeline works with.
+func (Encoder) Decode(upstream, client pipeline.Shape, raw []byte) (pipeline.Decoded, error) {
+	return Decode(upstream, client, raw)
 }

@@ -112,7 +112,13 @@ func (a *Adapter) prepareOpenAI(req *pipeline.Request, model string, maxTokens i
 	default:
 		path = joinURL(path, "/chat/completions")
 	}
-	body, err := wire.Patch(req.Shape, req.RawBody, req, model, maxTokens)
+	var body []byte
+	var err error
+	if req.Shape == pipeline.ShapeAnthropic {
+		body, err = wire.BuildOpenAIRequest(req, model, maxTokens)
+	} else {
+		body, err = wire.Patch(req.Shape, req.RawBody, req, model, maxTokens)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +127,7 @@ func (a *Adapter) prepareOpenAI(req *pipeline.Request, model string, maxTokens i
 		Headers: map[string]string{"Content-Type": "application/json", "Accept": accept(req.Stream)},
 		Body:    body,
 		Stream:  req.Stream,
+		Wire:    a.Route.Wire,
 	}, nil
 }
 
@@ -142,6 +149,7 @@ func (a *Adapter) prepareAnthropic(req *pipeline.Request, model string, maxToken
 		Headers: map[string]string{"Content-Type": "application/json", "Accept": accept(req.Stream)},
 		Body:    body,
 		Stream:  req.Stream,
+		Wire:    a.Route.Wire,
 	}, nil
 }
 

@@ -48,7 +48,7 @@ type RouteConfig struct {
 	BaseURL  string            `yaml:"base_url"`
 	AuthEnv  string            `yaml:"auth_env"`
 	ModelMap map[string]string `yaml:"model_map"`
-	Timeout  time.Duration     `yaml:"timeout"`
+	Timeout  Duration          `yaml:"timeout"`
 }
 
 type SecurityConfig struct {
@@ -66,10 +66,10 @@ type SecurityConfig struct {
 }
 
 type PIIConfig struct {
-	Redact    bool          `yaml:"redact"`
-	Detectors []string      `yaml:"detectors"`
-	VaultTTL  time.Duration `yaml:"vault_ttl"`
-	VaultSize int           `yaml:"vault_size"`
+	Redact    bool     `yaml:"redact"`
+	Detectors []string `yaml:"detectors"`
+	VaultTTL  Duration `yaml:"vault_ttl"`
+	VaultSize int      `yaml:"vault_size"`
 }
 
 type ResponseConfig struct {
@@ -79,9 +79,9 @@ type ResponseConfig struct {
 }
 
 type CacheConfig struct {
-	Enabled bool          `yaml:"enabled"`
-	TTL     time.Duration `yaml:"ttl"`
-	Size    int           `yaml:"size"`
+	Enabled bool     `yaml:"enabled"`
+	TTL     Duration `yaml:"ttl"`
+	Size    int      `yaml:"size"`
 }
 
 type BudgetConfig struct {
@@ -145,7 +145,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("route %q: base_url is required", name)
 		}
 		if r.Timeout <= 0 {
-			c.Routes[name] = withTimeout(r, 60*time.Second)
+			c.Routes[name] = withTimeout(r, Duration(60*time.Second))
 		}
 	}
 	if c.Security.Tamper && c.Security.TamperKeyFile == "" {
@@ -164,13 +164,13 @@ func (c *Config) Validate() error {
 		c.Cache.Size = 5000
 	}
 	if c.Cache.TTL <= 0 {
-		c.Cache.TTL = time.Hour
+		c.Cache.TTL = Duration(time.Hour)
 	}
 	if c.PII.VaultSize <= 0 {
 		c.PII.VaultSize = 10000
 	}
 	if c.PII.VaultTTL <= 0 {
-		c.PII.VaultTTL = time.Hour
+		c.PII.VaultTTL = Duration(time.Hour)
 	}
 	for _, d := range c.PII.Detectors {
 		if !validDetector(d) {
@@ -180,10 +180,46 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func withTimeout(r RouteConfig, d time.Duration) RouteConfig {
+func withTimeout(r RouteConfig, d Duration) RouteConfig {
 	r.Timeout = d
 	return r
 }
+
+// Duration is a time.Duration that YAML reads as "1h" rather than as an
+// integer count of nanoseconds, which is what yaml.v3 does by default.
+type Duration time.Duration
+
+// UnmarshalYAML accepts both "90s" strings and bare integers.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	if value.Tag == "!!int" {
+		var n int64
+		if err := value.Decode(&n); err != nil {
+			return err
+		}
+		*d = Duration(time.Duration(n))
+		return nil
+	}
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	if s == "" {
+		*d = 0
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("duration %q: %w", s, err)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// Std returns the standard library duration.
+func (d Duration) Std() time.Duration { return time.Duration(d) }
+
+// String renders the duration for logs.
+func (d Duration) String() string { return time.Duration(d).String() }
 
 // RouteFor returns the named route and its resolved timeout.
 func (c *Config) RouteFor(name string) (RouteConfig, bool) {

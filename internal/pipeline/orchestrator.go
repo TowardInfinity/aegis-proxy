@@ -29,6 +29,9 @@ type Upstream struct {
 	Headers map[string]string
 	Body    []byte
 	Stream  bool
+	// Wire is the route's protocol, which tells the pipeline how to read the
+	// response. It is not necessarily the shape the client speaks.
+	Wire string
 }
 
 // Adapter maps one normalized request onto one provider and sends it.
@@ -37,12 +40,25 @@ type Adapter interface {
 	Do(ctx context.Context, u *Upstream) (*http.Response, error)
 }
 
+// Decoded is a provider response reduced to the text to scan, the usage to
+// bill, and an encoder back into the client's wire shape. Encode closes over
+// the original body, so a same-wire response keeps fields the proxy does not
+// understand.
+type Decoded struct {
+	Text         string
+	InputTokens  int
+	OutputTokens int
+	Encode       func(text string) []byte
+}
+
 // Encoder is the wire-format surface. wire implements it; pipeline calls it.
 type Encoder interface {
 	ErrorBody(shape Shape, message, typ string) []byte
-	ResponseText(shape Shape, raw []byte) string
-	EncodeResponse(shape Shape, raw []byte, stored string, rewrite func(string) string) ([]byte, int, int, error)
+	Decode(upstream, client Shape, raw []byte) (Decoded, error)
 }
+
+// SoftNudgeText is the system message budget injection adds at 80 percent.
+const SoftNudgeText = "You are approaching your budget; be concise."
 
 // Ledger is the surface the orchestrator needs from budget enforcement.
 type Ledger interface {
@@ -103,6 +119,7 @@ type run struct {
 	cost      float64
 	cacheKey  string
 	shape     Shape
+	upstream  Shape
 }
 
 // Execute runs the pipeline for one request. sink is non-nil for a streaming
@@ -293,10 +310,10 @@ func (o *Orchestrator) stageBudget(r *run) (Result, bool) {
 	r.dec.Stage = StageBudget
 	if nudge {
 		r.headers["X-Guardrail-Budget"] = "approaching"
+		// The wire layer prepends the nudge to whatever body it sends, so the
+		// internal message list and the outbound body agree.
 		r.req.Nudge = true
-		if r.dec.Action == ActionPass {
-			r.dec.Action = ActionRedact
-		}
+		r.req.Messages = append([]Message{{Role: "system", Content: SoftNudgeText}}, r.req.Messages...)
 	}
 	return Result{}, false
 }
@@ -311,6 +328,7 @@ func (o *Orchestrator) stageUpstream(ctx context.Context, r *run, sink ResponseS
 	if err != nil {
 		return o.fail(r, http.StatusBadRequest, ActionBlock, StageRoute, err.Error())
 	}
+	r.upstream = upstreamShape(u.Wire)
 	resp, err := adapter.Do(ctx, u)
 	if err != nil {
 		return o.fail(r, http.StatusBadGateway, ActionBlock, StageRoute, err.Error())
@@ -344,24 +362,28 @@ func (o *Orchestrator) buffered(r *run, resp *http.Response) Result {
 	r.status = resp.StatusCode
 	r.headers["Content-Type"] = "application/json"
 
+	decoded, decErr := o.cfg.Encoding.Decode(r.upstream, r.shape, raw)
+	if decErr != nil {
+		// An unrecognized envelope still goes back to the client untouched;
+		// there is nothing to scan or bill.
+		r.inputTok, r.outputTok = 0, 0
+		r.dec.Stage = StageResponseScan
+		return Result{Status: r.status, Body: raw, Headers: r.headers}
+	}
+	r.inputTok, r.outputTok = decoded.InputTokens, decoded.OutputTokens
+
 	if r.shape == ShapeEmbedding {
-		r.inputTok, r.outputTok = usageFromBody(r.shape, raw)
 		r.dec.Stage = StageResponseScan
 		o.stageLedgerWrite(r)
 		return Result{Status: r.status, Body: raw, Headers: r.headers}
 	}
 
-	text := o.cfg.Encoding.ResponseText(r.shape, raw)
-	if res, blocked := o.scanOutput(r, text); blocked {
+	if res, blocked := o.scanOutput(r, decoded.Text); blocked {
 		return res
 	}
-	// Cache the tokenized body, then restore into the client copy. The cache
-	// therefore never holds the raw values it is asked to protect.
-	stored, client, in, out, err := o.tokenizeAndRewrite(r, raw)
-	r.inputTok, r.outputTok = in, out
-	if err != nil {
-		stored, client = raw, raw
-	}
+	// The cache copy keeps vault tokens; the client copy gets the originals
+	// back. The cache therefore never holds the values it protects.
+	stored, client := o.tokenizeAndRewrite(r, decoded)
 	o.stageCacheWrite(r, stored)
 	o.stageLedgerWrite(r)
 	r.dec.Stage = StageRoute
@@ -370,13 +392,13 @@ func (o *Orchestrator) buffered(r *run, resp *http.Response) Result {
 
 // tokenizeAndRewrite returns the cache copy (tokens in place) and the client
 // copy (vault values restored).
-func (o *Orchestrator) tokenizeAndRewrite(r *run, raw []byte) (stored, client []byte, in, out int, err error) {
-	text := o.cfg.Encoding.ResponseText(r.shape, raw)
-	tokenized := text
-	if o.cfg.ResponseRedactPII && len(o.cfg.Detectors) > 0 && text != "" {
+func (o *Orchestrator) tokenizeAndRewrite(r *run, decoded Decoded) (stored, client []byte) {
+	tokenized := decoded.Text
+	if o.cfg.ResponseRedactPII && len(o.cfg.Detectors) > 0 && decoded.Text != "" {
 		red := &dlp.Redactor{Detectors: o.cfg.Detectors, Vault: o.cfg.Vault}
-		tokenized, _, hits := red.Redact(text)
-		if tokenized != text {
+		var hits []dlp.Hit
+		tokenized, _, hits = red.Redact(decoded.Text)
+		if tokenized != decoded.Text {
 			for _, h := range hits {
 				r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "output_" + h.Rule, Score: h.Score, Sample: h.Sample})
 			}
@@ -385,30 +407,26 @@ func (o *Orchestrator) tokenizeAndRewrite(r *run, raw []byte) (stored, client []
 			}
 		}
 	}
-
-	rewrite := func(s string) string { return s }
-	if len(r.dec.Redactions) > 0 {
-		rewrite = func(s string) string {
-			out, _ := dlp.Rewrite(s, r.dec.Redactions)
-			return out
-		}
-	}
-	stored, in, out, err = o.cfg.Encoding.EncodeResponse(r.shape, raw, tokenized, rewrite)
-	return stored, stored, in, out, err
+	return decoded.Encode(tokenized), decoded.Encode(o.restore(r, tokenized))
 }
 
-// processResponseBody runs the stored body through rewrite for a cache hit.
-func (o *Orchestrator) processResponseBody(r *run, body []byte) ([]byte, int, int, error) {
-	text := o.cfg.Encoding.ResponseText(r.shape, body)
+// restore puts this request's vault values back into the text the client sees.
+func (o *Orchestrator) restore(r *run, text string) string {
 	if len(r.dec.Redactions) == 0 {
-		in, out := usageFromBody(r.shape, body)
-		return body, in, out, nil
+		return text
 	}
-	restore := func(s string) string {
-		out, _ := dlp.Rewrite(s, r.dec.Redactions)
-		return out
+	out, _ := dlp.Rewrite(text, r.dec.Redactions)
+	return out
+}
+
+// processResponseBody rebuilds a cached body in the client's shape. The cache
+// stores client-shaped bodies, so both shape arguments are the client's.
+func (o *Orchestrator) processResponseBody(r *run, body []byte) ([]byte, int, int, error) {
+	decoded, err := o.cfg.Encoding.Decode(r.shape, r.shape, body)
+	if err != nil {
+		return body, 0, 0, err
 	}
-	return o.cfg.Encoding.EncodeResponse(r.shape, body, text, restore)
+	return decoded.Encode(o.restore(r, decoded.Text)), decoded.InputTokens, decoded.OutputTokens, nil
 }
 
 func (o *Orchestrator) stageCacheWrite(r *run, body []byte) {
@@ -505,6 +523,14 @@ func estimate(req *Request) int {
 		total += req.MaxTokens
 	}
 	return total
+}
+
+// upstreamShape maps a route's wire name to the response shape.
+func upstreamShape(wireName string) Shape {
+	if wireName == "anthropic" {
+		return ShapeAnthropic
+	}
+	return ShapeChat
 }
 
 func maskSample(s string) string {

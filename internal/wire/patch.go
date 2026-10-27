@@ -57,6 +57,13 @@ func patchOpenAI(shape pipeline.Shape, raw []byte, req *pipeline.Request, model 
 			// only the text parts inside it.
 			msgs[i]["content"] = replaceContent(msgs[i]["content"], texts[i])
 		}
+		if req.Nudge {
+			nudge := map[string]json.RawMessage{
+				"role":    mustJSON("system"),
+				"content": mustJSON(pipeline.SoftNudgeText),
+			}
+			msgs = append([]map[string]json.RawMessage{nudge}, msgs...)
+		}
 		doc["messages"] = mustJSON(msgs)
 	case pipeline.ShapeCompletion:
 		doc["prompt"] = replacePrompt(doc["prompt"], firstUserText(req))

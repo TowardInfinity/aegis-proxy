@@ -19,7 +19,7 @@ import (
 
 // SoftNudgeText is the system message injected at 80% of a ceiling. It is
 // deliberately short: the nudge itself costs tokens.
-const SoftNudgeText = "You are approaching your budget; be concise."
+const SoftNudgeText = pipeline.SoftNudgeText
 
 // Pricing is dollars per million tokens.
 type Pricing struct {
