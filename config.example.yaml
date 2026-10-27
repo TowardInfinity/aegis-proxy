@@ -20,6 +20,9 @@ routes:
     wire: anthropic
     base_url: "https://api.anthropic.com"
     auth_env: ANTHROPIC_API_KEY
+    # api_key: "..."                    # inline key, used when auth_env is unset;
+    #                                   # only in a git-ignored config.yaml
+    # auth_header: bearer               # x-api-key (anthropic default) or bearer
     model_map:
       "claude-sonnet-4-5": "claude-sonnet-4-5"
       "gpt-4o": "claude-sonnet-4-5"     # OpenAI clients can target Claude
@@ -102,7 +105,7 @@ judge:
   enabled: false
   base_url: "https://openrouter.ai/api/v1"
   model: "google/gemma-4-26b-a4b-it:free"
-  auth_env: OPENROUTER_API_KEY
+  auth_env: OPENROUTER_API_KEY         # or api_key: "..." inline
   timeout: 5s
   # Judge only the newest message, and only when one of these appears or a
   # security rule scores in the grey zone. always: true judges every request.

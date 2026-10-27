@@ -72,13 +72,15 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 	adapters := map[string]*route.Adapter{}
 	for name, rc := range cfg.Routes {
 		adapters[name] = route.NewAdapter(route.Route{
-			Name:     name,
-			Wire:     rc.Wire,
-			BaseURL:  rc.BaseURL,
-			AuthEnv:  rc.AuthEnv,
-			ModelMap: rc.ModelMap,
-			Timeout:  rc.Timeout.Std(),
-			Retries:  2,
+			Name:       name,
+			Wire:       rc.Wire,
+			BaseURL:    rc.BaseURL,
+			AuthEnv:    rc.AuthEnv,
+			APIKey:     rc.APIKey,
+			AuthHeader: rc.AuthHeader,
+			ModelMap:   rc.ModelMap,
+			Timeout:    rc.Timeout.Std(),
+			Retries:    2,
 		})
 	}
 	limiter := security.NewLimiter(cfg.Security.RateLimitPerMin, cfg.Security.RateLimitPerIP)
@@ -133,9 +135,11 @@ func judgeFrom(j config.JudgeConfig) pipeline.Judge {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	key := ""
+	key := j.APIKey
 	if j.AuthEnv != "" {
-		key = os.Getenv(j.AuthEnv)
+		if v := os.Getenv(j.AuthEnv); v != "" {
+			key = v
+		}
 	}
 	return judge.New(j.BaseURL, j.Model, key, j.Policy, timeout)
 }

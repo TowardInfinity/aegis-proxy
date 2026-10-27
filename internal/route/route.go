@@ -21,13 +21,17 @@ import (
 
 // Route is a resolved route from config.
 type Route struct {
-	Name     string
-	Wire     string
-	BaseURL  string
-	AuthEnv  string
-	ModelMap map[string]string
-	Timeout  time.Duration
-	Retries  int
+	Name    string
+	Wire    string
+	BaseURL string
+	AuthEnv string
+	APIKey  string
+	// AuthHeader overrides the wire's default auth header: "x-api-key" or
+	// "bearer".
+	AuthHeader string
+	ModelMap   map[string]string
+	Timeout    time.Duration
+	Retries    int
 }
 
 // Adapter maps one request onto one provider. It satisfies pipeline.Adapter.
@@ -58,13 +62,16 @@ func NewAdapter(r Route) *Adapter {
 	}
 }
 
-// AuthToken reads the route's API key from the environment. An empty auth_env
-// means the upstream needs no auth, as with a local Ollama.
+// AuthToken returns the route's API key: the auth_env variable when set,
+// else the inline api_key. Neither means the upstream needs no auth, as with
+// a local Ollama.
 func (a *Adapter) AuthToken() string {
-	if a.Route.AuthEnv == "" {
-		return ""
+	if a.Route.AuthEnv != "" {
+		if v := os.Getenv(a.Route.AuthEnv); v != "" {
+			return v
+		}
 	}
-	return os.Getenv(a.Route.AuthEnv)
+	return a.Route.APIKey
 }
 
 // Prepare builds the outbound request for a normalized request.
@@ -90,11 +97,20 @@ func (a *Adapter) Prepare(req *pipeline.Request) (*pipeline.Upstream, error) {
 		return nil, err
 	}
 	if tok := a.AuthToken(); tok != "" {
-		if a.Route.Wire == "anthropic" {
+		header := a.Route.AuthHeader
+		if header == "" {
+			header = "bearer"
+			if a.Route.Wire == "anthropic" {
+				header = "x-api-key"
+			}
+		}
+		if header == "x-api-key" {
 			u.Headers["x-api-key"] = tok
-			u.Headers["anthropic-version"] = "2023-06-01"
 		} else {
 			u.Headers["Authorization"] = "Bearer " + tok
+		}
+		if a.Route.Wire == "anthropic" {
+			u.Headers["anthropic-version"] = "2023-06-01"
 		}
 	}
 	return u, nil

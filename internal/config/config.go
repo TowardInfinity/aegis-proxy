@@ -50,11 +50,17 @@ type TLSConfig struct {
 }
 
 type RouteConfig struct {
-	Wire     string            `yaml:"wire"`
-	BaseURL  string            `yaml:"base_url"`
-	AuthEnv  string            `yaml:"auth_env"`
-	ModelMap map[string]string `yaml:"model_map"`
-	Timeout  Duration          `yaml:"timeout"`
+	Wire    string `yaml:"wire"`
+	BaseURL string `yaml:"base_url"`
+	AuthEnv string `yaml:"auth_env"`
+	// APIKey is an inline key, used when auth_env is empty or unset. Fine
+	// for a local config.yaml (git-ignored); prefer auth_env in production.
+	APIKey string `yaml:"api_key"`
+	// AuthHeader is "x-api-key" or "bearer". Empty uses the wire's default:
+	// x-api-key for anthropic, bearer for openai.
+	AuthHeader string            `yaml:"auth_header"`
+	ModelMap   map[string]string `yaml:"model_map"`
+	Timeout    Duration          `yaml:"timeout"`
 }
 
 type SecurityConfig struct {
@@ -130,6 +136,7 @@ type JudgeConfig struct {
 	BaseURL    string   `yaml:"base_url"`
 	Model      string   `yaml:"model"`
 	AuthEnv    string   `yaml:"auth_env"`
+	APIKey     string   `yaml:"api_key"`
 	Timeout    Duration `yaml:"timeout"`
 	Policy     string   `yaml:"policy"`
 	Triggers   []string `yaml:"triggers"`
@@ -177,6 +184,11 @@ func (c *Config) Validate() error {
 		}
 		if r.BaseURL == "" {
 			return fmt.Errorf("route %q: base_url is required", name)
+		}
+		switch r.AuthHeader {
+		case "", "x-api-key", "bearer":
+		default:
+			return fmt.Errorf("route %q: auth_header must be x-api-key or bearer, got %q", name, r.AuthHeader)
 		}
 		if r.Timeout <= 0 {
 			c.Routes[name] = withTimeout(r, Duration(60*time.Second))
