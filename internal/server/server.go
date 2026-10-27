@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,11 +196,24 @@ func (s *Server) Handler() http.Handler {
 	return withNotFound(mux)
 }
 
-// AdminHandler returns the admin plane. Every route 404s without a valid
+//go:embed dashboard.html
+var dashboardHTML []byte
+
+// AdminHandler returns the admin plane. Every data route 404s without a valid
 // bearer token, which is the behavior DESIGN.md asks for: the port should not
-// even acknowledge that it is an admin surface.
+// even acknowledge that it is an admin surface. The one exception is
+// /dashboard, a static page with no data that reveals the port's purpose; the
+// plane binds to loopback, so only someone on the host can see it.
 func (s *Server) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
+	// The dashboard page is static and holds no data; its script reads the
+	// token from the URL fragment and calls the token-protected routes below.
+	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		_, _ = w.Write(dashboardHTML)
+	})
 	mux.HandleFunc("/stats", s.admin(func(w http.ResponseWriter, r *http.Request) {
 		stats, err := audit.Aggregate(s.db)
 		if err != nil {

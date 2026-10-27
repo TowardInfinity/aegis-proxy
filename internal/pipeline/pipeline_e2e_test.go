@@ -490,7 +490,8 @@ func (s *captureSink) Flush() {}
 
 func TestE2EStreamingPassThrough(t *testing.T) {
 	up := &fakeUpstream{stream: true}
-	h := newHarness(t, up, &stubLedger{})
+	led := &stubLedger{}
+	h := newHarness(t, up, led)
 	req := chatRequest(t, "stream please")
 	req.Stream = true
 	sink := &captureSink{}
@@ -511,5 +512,10 @@ func TestE2EStreamingPassThrough(t *testing.T) {
 	}
 	if sink.headers["Content-Type"] != "text/event-stream" {
 		t.Fatalf("content type = %q", sink.headers["Content-Type"])
+	}
+	// Streamed turns are billed like buffered ones, or budgets never bite on
+	// streaming clients such as Claude Code.
+	if led.recorded != 1 {
+		t.Fatalf("ledger records = %d, want 1", led.recorded)
 	}
 }

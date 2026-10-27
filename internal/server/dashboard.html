@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aegis Live Ledger</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14181f; --muted: #5d6675; --line: #e3e6eb;
+  --pass: #1f7a4d; --pass-bg: #e3f4ea; --redact: #8a5a00; --redact-bg: #fdf1d6;
+  --block: #b42318; --block-bg: #fde7e5; --held: #5b3cc4; --held-bg: #ece7fd;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116; --panel: #161b22; --ink: #e6e9ee; --muted: #9aa4b2; --line: #262d36;
+    --pass: #4cc38a; --pass-bg: #12301f; --redact: #f0b847; --redact-bg: #33270c;
+    --block: #ff7b72; --block-bg: #3a1513; --held: #b29dff; --held-bg: #251c47;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: baseline; gap: 12px; padding: 20px 24px 8px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); }
+.live { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pass); }
+.dot.off { background: var(--block); }
+main { padding: 8px 24px 32px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile.held .v { color: var(--held); } .tile.block .v { color: var(--block); } .tile.redact .v { color: var(--redact); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.new { animation: flash 1.2s ease-out; }
+@keyframes flash { from { background: var(--held-bg); } to { background: transparent; } }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pass { color: var(--pass); background: var(--pass-bg); } .redact { color: var(--redact); background: var(--redact-bg); }
+.block { color: var(--block); background: var(--block-bg); } .held { color: var(--held); background: var(--held-bg); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); }
+.why { margin-top: 4px; color: var(--held); font-size: 13px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.empty { padding: 32px; text-align: center; color: var(--muted); }
+form { display: flex; gap: 8px; padding: 24px; }
+form[hidden] { display: none; }
+input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink); color: var(--bg); font-weight: 600; }
+@media (max-width: 640px) { header, main { padding-left: 16px; padding-right: 16px; } .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aegis live ledger</h1>
+  <span class="sub">Every AI request from every tool, as it happens</span>
+  <span class="live"><span class="dot" id="dot"></span><span id="status">connecting</span></span>
+</header>
+<main>
+  <form id="login" hidden>
+    <input id="tok" type="password" placeholder="Admin token (GUARDRAIL_ADMIN_TOKEN)" autocomplete="off">
+    <button>Open</button>
+  </form>
+  <section class="tiles" id="tiles"></section>
+  <section class="card">
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Employee</th><th>Decision</th><th>What the proxy did</th>
+        <th class="hide-sm">Model</th><th class="num hide-sm">Tokens</th><th class="num">Latency</th><th class="num hide-sm">Cost</th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="8" class="empty">Waiting for traffic…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script>
+// The page carries no data. It reads the admin token from the URL fragment
+// (never sent to the server) or a prompt, and calls the token-protected API.
+let token = "";
+try { token = new URLSearchParams(location.hash.slice(1)).get("token") || sessionStorage.getItem("aegis-token") || ""; } catch (e) {}
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let seen = new Set();
+
+$("login").addEventListener("submit", (e) => {
+  e.preventDefault(); token = $("tok").value.trim();
+  try { sessionStorage.setItem("aegis-token", token); } catch (e) {}
+  $("login").hidden = true; tick();
+});
+
+async function get(path) {
+  const r = await fetch(path, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function decision(row) {
+  const hits = row.RuleHits || [];
+  if (hits.some((h) => h.rule === "judge_escalate" || h.rule === "judge_held")) return ["held", "held for review"];
+  if (row.Action === "block") return ["block", "blocked"];
+  if (row.Action === "redact") return ["redact", "redacted"];
+  return ["pass", "passed"];
+}
+
+const label = {
+  judge_escalate: "AI judge: escalate", judge_held: "held content resent", judge_allow: "AI judge: allow",
+  judge_unavailable: "AI judge unavailable", generic_secret: "secret", aws_key: "AWS key", credit_card: "card",
+  private_key: "private key", email: "email", phone: "phone", jwt: "JWT", iban: "IBAN", ssn: "SSN",
+};
+
+function what(row) {
+  const hits = row.RuleHits || [];
+  let chips = [], why = "";
+  const counts = {};
+  for (const h of hits) {
+    if (h.rule === "judge_escalate" || h.rule === "judge_held") { why = h.sample || ""; }
+    const name = label[h.rule] || h.rule;
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  for (const [n, c] of Object.entries(counts)) chips.push(`<span class="chip">${esc(n)}${c > 1 ? " ×" + c : ""}</span>`);
+  if (!chips.length) chips.push(`<span class="chip">clean</span>`);
+  if (row.Stage && row.Action === "block" && !why) chips.push(`<span class="chip">stage: ${esc(row.Stage)}</span>`);
+  return `<div class="chips">${chips.join("")}</div>` + (why ? `<div class="why">${esc(why)}</div>` : "");
+}
+
+function tiles(s, rows) {
+  const held = rows.filter((r) => decision(r)[0] === "held").length;
+  const a = s.actions || {};
+  const t = [
+    ["Requests", s.total_requests ?? 0, ""],
+    ["Redacted", a.redact ?? 0, "redact"],
+    ["Blocked", (a.block ?? 0) - held, "block"],
+    ["Held for review", held, "held"],
+    ["Spend", "$" + (s.usd_spent ?? 0).toFixed(4), ""],
+    ["Median latency", (s.median_latency_ms ?? 0) + " ms", ""],
+  ];
+  $("tiles").innerHTML = t.map(([k, v, c]) => `<div class="tile ${c}"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join("");
+}
+
+function render(rows) {
+  if (!rows.length) return;
+  const fresh = seen.size > 0;
+  $("rows").innerHTML = rows.map((r) => {
+    const id = r.TS + r.Key + r.LatencyMS;
+    const isNew = fresh && !seen.has(id);
+    const [cls, txt] = decision(r);
+    const t = new Date(r.TS);
+    return `<tr class="${isNew ? "new" : ""}">
+      <td class="mono">${t.toLocaleTimeString()}</td>
+      <td>${esc(r.Key || "anonymous")}</td>
+      <td><span class="pill ${cls}">${txt}</span></td>
+      <td>${what(r)}</td>
+      <td class="mono hide-sm">${esc(r.Model)}</td>
+      <td class="num hide-sm">${(r.InputTokens + r.OutputTokens).toLocaleString()}</td>
+      <td class="num">${r.LatencyMS} ms</td>
+      <td class="num hide-sm">$${r.CostUSD.toFixed(5)}</td></tr>`;
+  }).join("");
+  seen = new Set(rows.map((r) => r.TS + r.Key + r.LatencyMS));
+}
+
+async function tick() {
+  if (!token) { $("login").hidden = false; $("status").textContent = "token needed"; $("dot").className = "dot off"; return; }
+  try {
+    const [s, l] = await Promise.all([get("/stats"), get("/ledger?limit=50")]);
+    const rows = l.rows || [];
+    tiles(s, rows); render(rows);
+    $("status").textContent = "live · " + new Date().toLocaleTimeString(); $("dot").className = "dot";
+  } catch (e) {
+    $("status").textContent = e.message === "404" ? "wrong token" : "proxy unreachable";
+    $("dot").className = "dot off";
+    if (e.message === "404") { $("login").hidden = false; return; }
+  }
+  setTimeout(tick, 2000);
+}
+tick();
+</script>
+</body>
+</html>

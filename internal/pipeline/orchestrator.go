@@ -395,7 +395,7 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 	ticket := "SEC-" + strings.ToUpper(hex.EncodeToString(key[:4]))
 	o.held.add(key, heldEntry{ticket: ticket, reason: v.Reason})
 	r.headers["X-Guardrail-Ticket"] = ticket
-	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: v.Category + ": " + v.Reason})
+	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: ticket + " " + v.Category + ": " + v.Reason})
 	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge,
 		fmt.Sprintf("held for security review (ticket %s): %s", ticket, v.Reason)), true
 }
@@ -666,6 +666,7 @@ func (o *Orchestrator) streamThrough(r *run, resp *http.Response, sink ResponseS
 		o.scanOutput(r, text)
 	}
 	r.status = resp.StatusCode
+	o.stageLedgerWrite(r)
 	r.dec.Stage = StageResponseScan
 	return Result{Status: resp.StatusCode, Body: nil, Headers: r.headers}
 }
