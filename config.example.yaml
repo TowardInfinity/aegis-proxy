@@ -1,0 +1,98 @@
+# Guardrail config. Copy to config.yaml, edit, then:
+#   guardrail sign config.yaml      # writes config.yaml.sig + guardrail_ed25519.pub
+#   guardrail serve -config config.yaml
+#
+# With security.tamper true the proxy refuses to start unless the .sig verifies
+# against the public key named here.
+
+listen: ":8080"
+
+tls:
+  # Leave both empty for plain HTTP behind a local reverse proxy.
+  cert_file: ""
+  key_file: ""
+
+# One entry per provider. A request picks a route by the X-Guardrail-Route
+# header, a "route/model" model prefix ("claude/claude-sonnet-4-5"), a model
+# listed in a route's model_map, or the default (openai, then claude).
+routes:
+  claude:
+    wire: anthropic
+    base_url: "https://api.anthropic.com"
+    auth_env: ANTHROPIC_API_KEY
+    model_map:
+      "claude-sonnet-4-5": "claude-sonnet-4-5"
+      "gpt-4o": "claude-sonnet-4-5"     # OpenAI clients can target Claude
+    timeout: 60s
+
+  openai:
+    wire: openai
+    base_url: "https://api.openai.com"
+    auth_env: OPENAI_API_KEY
+    model_map:
+      "gpt-4o": "gpt-4o"
+      "gpt-4o-mini": "gpt-4o-mini"
+    timeout: 60s
+
+  aipro:
+    wire: openai
+    base_url: "https://aipro.example.com/v1"
+    auth_env: AIPRO_API_KEY
+    model_map:
+      "aipro-chat": "aipro-chat"
+    timeout: 60s
+
+  ollama:
+    wire: openai
+    base_url: "http://localhost:11434/v1"
+    auth_env: ""                        # local, no key
+    model_map:
+      "llama3.2": "llama3.2"
+    timeout: 120s
+
+security:
+  tamper: true                          # refuse to start on an unsigned config
+  tamper_key_file: "guardrail_ed25519.pub"
+  max_body_bytes: 1048576               # requests above this get 413
+  max_tokens: 8192                      # schema ceiling for max_tokens
+  rate_limit_per_min: 60                # per API key
+  rate_limit_per_min_ip: 120            # per client IP
+  # Optional per-family block scores. Zero means the built-in default
+  # (0.8 for injection and jailbreak, 0.7 for schema).
+  thresholds: {}
+  # monitor runs the detectors and records their scores without blocking.
+  monitor: false
+
+pii:
+  redact: true
+  # Closed set: email, phone, ssn, credit_card, aws_key, jwt, private_key,
+  # generic_secret, iban.
+  detectors: [email, phone, ssn, credit_card, aws_key, jwt, private_key, generic_secret, iban]
+  vault_ttl: 1h                         # cross-request token memo lifetime
+  vault_size: 10000                     # LRU entries
+
+response:
+  redact_pii: true                      # tokenize PII in model output
+  block_secrets: true                   # 403 when output carries a credential
+  block_injection: false                # flag-only: false positives are costly
+
+cache:
+  enabled: true
+  ttl: 1h
+  size: 5000                            # entries, LRU
+
+budget:
+  soft_nudge: true                      # append "be concise" at 80% of the key ceiling
+  daily_usd: 50.0                       # global
+  daily_tokens: 2000000                 # global
+  hourly_tokens: 400000                 # per key
+  per_key_daily_usd: 10.0
+  per_key_daily_tokens: 400000
+  # USD per million tokens, used for estimates and ledger costs.
+  pricing:
+    "claude-sonnet-4-5": {input: 3.0, output: 15.0}
+    "gpt-4o": {input: 2.5, output: 10.0}
+    "gpt-4o-mini": {input: 0.15, output: 0.6}
+
+storage:
+  sqlite_path: "guardrail.db"
