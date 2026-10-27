@@ -205,6 +205,39 @@ We report savings per request in the audit log (input tokens before vs after com
 
 **`/v1/models`**: list from config, no upstream call.
 
+## ML classification layer (researched, added post-spike)
+
+A research spike on this machine (Go 1.27.3, Windows 11 x64) measured embedding a small ONNX classifier directly in the Go binary. Findings that shaped the design:
+
+- **ONNX Runtime in Go is proven feasible.** A Go binary embedding `onnxruntime.dll` (17.25 MB) plus a 96 MB int8 model built and ran: 118 MB single exe, ~178 MB RAM, ~20 ms on short prompts. The DLL is extracted to a SHA-256-checked temp dir at first run; the user-visible artifact is still one exe.
+- **ML can never live in the synchronous request path.** At 512 tokens the measured inference cost was ~0.5 s, against our 5 ms budget. So ML runs asynchronously and never blocks the handler.
+- **Model choice: `patronus-studio/wolf-defender-prompt-injection-small`** (141M params, mmBERT-small, 96 MB int8/int4, Apache-2.0). In the spike it caught a classic DAN jailbreak at P=0.99 that Meta's Prompt Guard 2 22M missed entirely (P=0.005), and ran 5x faster at 512 tokens. Prompt Guard 2 is gated + Llama-licensed anyway.
+- **Truncation strategy matters more than model choice.** Naive head truncation to 512 tokens scored a buried injection at P=0.000 (total miss); a tail-preserving window on the same text scored P=0.981. The proxy must window, never truncate.
+- **Laya is rejected**: 1.2-1.6 GB weights, 300-600 ms per prompt, recall 0.72 / FPR 0.21 on its own authors' guard set, Python sidecar for the easy path. Its useful contribution is the `presets.Guard()` question wording, copied into our detector coverage checklist.
+- **PII detection stays regex**: Presidio's own numbers show regex at 0.90-1.00 recall on the structured types we handle (email, SSN, cards, keys), while PII NER models degrade badly on out-of-distribution text and cost 250 ms - 1 s plus ~800 MB RAM.
+- **"Jev" is a closed commercial API** (TypeSafe, `$42/B tokens`), not an open model; open clones are sidecar processes, not Go libraries.
+
+Design contract, per the spike's recommendation:
+
+```yaml
+ml:
+  enabled: false            # default OFF; the binary must pass every test with it off
+  model_path: ""            # optional; falls back to the embedded model
+  threshold: 0.90
+  mode: shadow              # shadow | flag | block
+  max_tokens: 512
+  window: tail              # tail | head | both
+  timeout_ms: 1500
+```
+
+**Regex decides; the model advises; nothing blocks on the model's latency.** After the security stage computes family scores, if `ml.enabled` and `mode != block`, the text goes to a bounded worker pool (2 workers, queue 64, drop-on-full with a counter). The HTTP handler never waits.
+
+- `shadow`: score every request, write `ml_score` into the audit row. Demo mode: regex and ML side by side on the same prompt, ML catches what regex missed.
+- `flag`: if a regex family sits at 0.5-0.8 (below block) and ML scores > 0.9, promote the audit decision to `flag`.
+- `block`: only on `X-Guardrail-ML: strict` header or explicit config opt-in; then and only then does the handler wait, with a 1.5 s timeout falling back to the regex verdict.
+
+Fail-open on model error (log once, continue regex-only), fail-closed on policy error. If the DLL or model fails to load, the proxy runs regex-only and passes every test.
+
 ## Non-goals
 
 - No GPU inference, no local model, no fine-tuning.
