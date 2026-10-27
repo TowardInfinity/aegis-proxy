@@ -1,0 +1,21 @@
+{
+  "providers": {
+    "aegis-anthropic": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://aegis.corp.example",
+      "apiKey": "AEGIS_EMPLOYEE_TOKEN",
+      "models": [
+        { "id": "deepseek/deepseek-v4.1-flash-1017", "input": ["text"], "reasoning": true },
+        { "id": "z-ai/glm-5.3-flash", "input": ["text"], "reasoning": true }
+      ]
+    },
+    "aegis-aipro": {
+      "api": "openai-completions",
+      "baseUrl": "https://aegis.corp.example/v1",
+      "apiKey": "AEGIS_EMPLOYEE_TOKEN",
+      "models": [
+        { "id": "aipro-chat", "input": ["text"], "reasoning": false }
+      ]
+    }
+  }
+}
