@@ -32,6 +32,9 @@ type Config struct {
 	Cache    CacheConfig    `yaml:"cache"`
 	Budget   BudgetConfig   `yaml:"budget"`
 	Storage  StorageConfig  `yaml:"storage"`
+	// ML is accepted so configs written against the extended design parse, but
+	// this build has no ONNX runtime and refuses to start with it enabled.
+	ML MLConfig `yaml:"ml"`
 
 	// SourcePath and SourceHash are filled in by Load, never by YAML.
 	SourcePath string `yaml:"-"`
@@ -101,6 +104,19 @@ type PricingConfig struct {
 
 type StorageConfig struct {
 	SQLitePath string `yaml:"sqlite_path"`
+}
+
+// MLConfig is the asynchronous classifier contract. The regex pipeline is the
+// only detector set in this binary, so enabling this is an error, not a
+// silently ignored setting.
+type MLConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	ModelPath string  `yaml:"model_path"`
+	Threshold float64 `yaml:"threshold"`
+	Mode      string  `yaml:"mode"`
+	MaxTokens int     `yaml:"max_tokens"`
+	Window    string  `yaml:"window"`
+	TimeoutMS int     `yaml:"timeout_ms"`
 }
 
 // Load reads and validates the config at path. Signature handling is separate
@@ -176,6 +192,19 @@ func (c *Config) Validate() error {
 		if !validDetector(d) {
 			return fmt.Errorf("pii.detectors: unknown detector %q", d)
 		}
+	}
+	if c.ML.Enabled {
+		return errors.New("ml.enabled requires the ONNX classifier, which this build does not include; run with ml.enabled: false")
+	}
+	switch c.ML.Mode {
+	case "", "shadow", "flag", "block":
+	default:
+		return fmt.Errorf("ml.mode must be shadow, flag, or block, got %q", c.ML.Mode)
+	}
+	switch c.ML.Window {
+	case "", "tail", "head", "both":
+	default:
+		return fmt.Errorf("ml.window must be tail, head, or both, got %q", c.ML.Window)
 	}
 	return nil
 }

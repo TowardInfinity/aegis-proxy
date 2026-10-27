@@ -94,5 +94,17 @@ budget:
     "gpt-4o": {input: 2.5, output: 10.0}
     "gpt-4o-mini": {input: 0.15, output: 0.6}
 
+# Optional ML classifier contract from DESIGN.md. This build is regex-only, so
+# leave enabled false. Starting with ml.enabled true is refused with a clear
+# error rather than silently ignoring the setting.
+ml:
+  enabled: false
+  model_path: ""
+  threshold: 0.90
+  mode: shadow
+  max_tokens: 512
+  window: tail
+  timeout_ms: 1500
+
 storage:
   sqlite_path: "guardrail.db"

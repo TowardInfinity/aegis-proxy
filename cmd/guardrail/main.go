@@ -75,7 +75,7 @@ func serve(args []string) {
 	if err != nil {
 		fail("cannot start server", err)
 	}
-	log.Printf("data plane listening on %s, admin plane on %s", cfg.Listen, server.AdminAddr)
+	log.Printf("data plane listening on %s, admin plane on %s", cfg.Listen, server.AdminListenAddr())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

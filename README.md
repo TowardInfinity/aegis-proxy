@@ -90,11 +90,11 @@ Stats reports `tokens_saved`, `usd_saved`, `usd_spent`, and the cache hit rate s
 
 ## Honest limits
 
-- **Detection is deterministic, not semantic.** Regex and checksums cannot catch a novel injection phrased around the rules, or PII in an unanticipated format. There is no embedding similarity or classifier. This is the CPU-only floor, and it is described as such on purpose.
+- **Detection is deterministic, not semantic.** Regex and checksums cannot catch a novel injection phrased around the rules, or PII in an unanticipated format. There is no embedding similarity or classifier. This is the CPU-only floor, and it is described as such on purpose. The optional asynchronous ONNX classifier described in the extended DESIGN.md is not in this build: the config accepts the `ml` block but refuses to start with `ml.enabled: true` rather than pretend to scan.
 - **Streaming responses are not re-identified in real time.** Chunks are forwarded byte for byte while the full text accumulates; the response is scanned and parsed after the stream ends, so an output-side block or cache write happens after the client has already seen the bytes. Non-streaming traffic is fully enforced.
 - **Streaming across wire formats is refused.** No OpenAI-to-Anthropic SSE translation.
 - **Response blocking is opt-in for injection.** False positives on model output are costly, so `block_injection` defaults to false.
-- **Cache keys are exact after normalization.** Paraphrases miss. No semantic cache.
+- **Cache keys are exact after normalization.** Paraphrases miss. No semantic cache. The key is prompt, model, and temperature as specified, so `max_tokens` is not part of it: a cached answer can be shorter than a later request asks for.
 - **The proxy does not compress prompts or reroute to a cheaper model.** DESIGN.md lists both as opt-in levers; neither is implemented here. Saved tokens come from cache hits and redaction, and the audit reflects only those.
 - **Config signing is fail-closed, not tamper-evident against the operator.** The proxy refuses an unsigned or modified config when `security.tamper` is true, but the operator can flip the flag and re-sign. That is the honest boundary of a local proxy.
 - **The admin token comes from `GUARDRAIL_ADMIN_TOKEN`.** If the variable is unset, the admin plane returns 404 for every request.

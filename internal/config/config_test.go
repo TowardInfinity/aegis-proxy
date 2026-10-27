@@ -141,3 +141,37 @@ func TestValidateRejectsUnknownWire(t *testing.T) {
 		t.Fatal("unknown wire was accepted")
 	}
 }
+
+func TestMLConfigDefaultsOff(t *testing.T) {
+	body := strings.Replace(testConfig, "tamper: true", "tamper: false", 1) + `
+ml:
+  enabled: false
+  mode: shadow
+  window: tail
+  threshold: 0.9
+`
+	path := writeConfig(t, body)
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("disabled ml block rejected: %v", err)
+	}
+	if cfg.ML.Enabled || cfg.ML.Mode != "shadow" {
+		t.Fatalf("ml config = %+v", cfg.ML)
+	}
+}
+
+func TestMLEnabledIsRefused(t *testing.T) {
+	body := strings.Replace(testConfig, "tamper: true", "tamper: false", 1) + "\nml:\n  enabled: true\n"
+	path := writeConfig(t, body)
+	if _, _, err := Load(path); err == nil || !strings.Contains(err.Error(), "ONNX") {
+		t.Fatalf("ml.enabled should fail loudly, got %v", err)
+	}
+}
+
+func TestMLBadModeRejected(t *testing.T) {
+	body := strings.Replace(testConfig, "tamper: true", "tamper: false", 1) + "\nml:\n  enabled: false\n  mode: aggressive\n"
+	path := writeConfig(t, body)
+	if _, _, err := Load(path); err == nil {
+		t.Fatal("unknown ml.mode accepted")
+	}
+}

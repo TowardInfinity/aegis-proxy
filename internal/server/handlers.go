@@ -45,7 +45,7 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request, shape pipel
 	req.CacheBypass = strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache")
 	req.Route, req.Model = s.resolveRoute(r, req.Model)
 
-	if req.Stream && !s.sameWire(shape, req.Route) {
+	if _, ok := s.cfg.Routes[req.Route]; req.Stream && ok && !s.sameWire(shape, req.Route) {
 		// The SSE chunks are forwarded byte-for-byte, so the upstream and the
 		// client have to speak the same wire.
 		return bodyError(shape, http.StatusBadRequest,

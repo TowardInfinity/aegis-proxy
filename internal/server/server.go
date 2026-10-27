@@ -26,9 +26,17 @@ import (
 	"guardrail/internal/wire"
 )
 
-// AdminTTL is how long the admin token stays valid. The token comes from the
-// environment, so this only matters for the 404 behavior: no token, no admin.
+// AdminAddr is where the admin plane listens. It never leaves loopback.
 const AdminAddr = "127.0.0.1:8081"
+
+// AdminListenAddr lets a host that has 8081 taken move the admin plane without
+// a rebuild. The default stays as designed.
+func AdminListenAddr() string {
+	if v := os.Getenv("GUARDRAIL_ADMIN_ADDR"); v != "" {
+		return v
+	}
+	return AdminAddr
+}
 
 // Server owns both listeners and every long-lived dependency.
 type Server struct {
@@ -305,7 +313,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // Run starts both servers and blocks until ctx is canceled.
 func (s *Server) Run(ctx context.Context) error {
 	dataSrv := &http.Server{Addr: s.cfg.Listen, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	adminSrv := &http.Server{Addr: AdminAddr, Handler: s.AdminHandler(), ReadHeaderTimeout: 10 * time.Second}
+	adminSrv := &http.Server{Addr: AdminListenAddr(), Handler: s.AdminHandler(), ReadHeaderTimeout: 10 * time.Second}
 
 	errc := make(chan error, 2)
 	go func() {
@@ -340,7 +348,7 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) listen(srv *http.Server) error {
-	if srv.Addr == AdminAddr {
+	if srv.Addr == AdminListenAddr() {
 		// The admin plane never leaves loopback.
 		return srv.ListenAndServe()
 	}
