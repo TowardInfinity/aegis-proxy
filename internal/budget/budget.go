@@ -10,6 +10,7 @@ package budget
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -202,6 +203,32 @@ func (l *Ledger) GlobalSpend() float64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.globUSD
+}
+
+// KeySnapshot is one key's spend for the current local day. Caps are config,
+// not ledger state, so they are joined on by the admin handler.
+type KeySnapshot struct {
+	Key         string  `json:"key"`
+	TokensToday int     `json:"tokens_today"`
+	USDToday    float64 `json:"usd_today"`
+}
+
+// Snapshot lists every key the ledger is tracking, sorted by key. It rolls
+// the day first so a dashboard poll after midnight matches the ceilings
+// Check enforces, instead of showing yesterday's tally.
+func (l *Ledger) Snapshot() []KeySnapshot {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.roll(time.Now())
+	out := make([]KeySnapshot, 0, len(l.keys))
+	for key, t := range l.keys {
+		if t == nil {
+			continue
+		}
+		out = append(out, KeySnapshot{Key: key, TokensToday: t.dailyTok, USDToday: t.dailyUSD})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // DayStart returns local midnight for now.

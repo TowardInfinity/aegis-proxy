@@ -107,6 +107,34 @@ func TestUnpricedModelCostsZero(t *testing.T) {
 	}
 }
 
+func TestSnapshotReportsTodayAndRolls(t *testing.T) {
+	l := newLedger(t)
+	if snap := l.Snapshot(); snap == nil {
+		t.Fatal("empty snapshot is nil")
+	}
+	// Record b first so the result order is the sort, not insertion order.
+	l.Record("b", "gpt-4o", 1000, 0)
+	l.Record("a", "gpt-4o", 2000, 500)
+	snap := l.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("snapshot len %d", len(snap))
+	}
+	if snap[0].Key != "a" || snap[0].TokensToday != 2500 || snap[0].USDToday != 2.5 {
+		t.Fatalf("a = %+v", snap[0])
+	}
+	if snap[1].Key != "b" || snap[1].TokensToday != 1000 || snap[1].USDToday != 1 {
+		t.Fatalf("b = %+v", snap[1])
+	}
+
+	l.mu.Lock()
+	l.dayMark = DayStart(time.Now()) - 86400
+	l.mu.Unlock()
+	snap = l.Snapshot()
+	if len(snap) != 2 || snap[0].TokensToday != 0 || snap[0].USDToday != 0 || snap[1].TokensToday != 0 {
+		t.Fatalf("after day roll: %+v", snap)
+	}
+}
+
 func TestSpendSurvivesRestart(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "seed.db"))
 	if err != nil {

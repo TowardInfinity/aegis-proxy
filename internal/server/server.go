@@ -54,6 +54,10 @@ type Server struct {
 	dev      bool
 	devLog   *log.Logger
 	adminTok string
+	// sigVerified is the tamper result captured when the process started.
+	// /policy reports this snapshot; a later edit of the file must not
+	// change the answer on the next poll.
+	sigVerified bool
 }
 
 // Build constructs the server and its dependencies. The caller owns the DB.
@@ -93,17 +97,18 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 	limiter := security.NewLimiter(cfg.Security.RateLimitPerMin, cfg.Security.RateLimitPerIP)
 
 	s := &Server{
-		cfg:      cfg,
-		db:       db,
-		audit:    au,
-		cache:    c,
-		ledger:   ledger,
-		router:   adapters,
-		limiter:  limiter,
-		held:     held,
-		dev:      dev,
-		devLog:   log.New(os.Stderr, "", 0),
-		adminTok: os.Getenv("GUARDRAIL_ADMIN_TOKEN"),
+		cfg:         cfg,
+		db:          db,
+		audit:       au,
+		cache:       c,
+		ledger:      ledger,
+		router:      adapters,
+		limiter:     limiter,
+		held:        held,
+		dev:         dev,
+		devLog:      log.New(os.Stderr, "", 0),
+		adminTok:    os.Getenv("GUARDRAIL_ADMIN_TOKEN"),
+		sigVerified: signatureVerified(cfg),
 	}
 	s.orch = pipeline.New(pipeline.Config{
 		MaxBodyBytes:           cfg.Security.MaxBodyBytes,
@@ -269,6 +274,11 @@ func (s *Server) AdminHandler() http.Handler {
 	mux.HandleFunc("POST /held/{ticket}/approve", s.admin(s.handleHeldApprove))
 	mux.HandleFunc("POST /held/{ticket}/reject", s.admin(s.handleHeldReject))
 	mux.HandleFunc("POST /simulate", s.admin(s.handleSimulate))
+
+	// P4
+	mux.HandleFunc("/timeseries", s.admin(s.handleTimeseries))
+	mux.HandleFunc("/budgets", s.admin(s.handleBudgets))
+	mux.HandleFunc("/policy", s.admin(s.handlePolicy))
 	return withNotFound(mux)
 }
 
