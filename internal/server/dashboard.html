@@ -85,7 +85,24 @@ button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink
   </section>
 
   <!-- P1 approvals: fill this panel, set data-ready, keep code in its own <style>/<script> block below. -->
-  <section class="panel" data-tab="approvals" data-title="Approvals" hidden></section>
+  <section class="panel" data-tab="approvals" data-title="Approvals" data-ready hidden>
+    <p class="sub" id="held-error"></p>
+    <section class="card">
+      <table>
+        <thead><tr>
+          <th>Ticket</th><th>Employee</th><th>Category</th><th>Reason</th><th>Age</th><th></th>
+        </tr></thead>
+        <tbody id="held-pending"><tr><td colspan="6" class="empty">No pending reviews</td></tr></tbody>
+      </table>
+    </section>
+    <h2 class="held-h">Decided</h2>
+    <section class="card">
+      <table>
+        <thead><tr><th>Ticket</th><th>Status</th><th>By</th><th>Note</th></tr></thead>
+        <tbody id="held-decided"><tr><td colspan="4" class="empty">None yet</td></tr></tbody>
+      </table>
+    </section>
+  </section>
   <!-- P3 playground -->
   <section class="panel" data-tab="playground" data-title="Playground" hidden></section>
   <!-- P4 usage -->
@@ -220,6 +237,107 @@ $("tabs").addEventListener("click", (e) => {
 });
 </script>
 <!-- Feature scripts go below, one <script> block per packet, after the shared hooks. -->
+<style>
+/* P1 approvals */
+.held-h { font-size: 15px; margin: 18px 0 8px; }
+#held-error { min-height: 1.2em; color: var(--block); margin: 0 0 8px; }
+.held-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.held-actions input { flex: 1; min-width: 8em; padding: 4px 8px; }
+.held-actions button { padding: 4px 10px; }
+.held-actions button.no { background: var(--block); color: #fff; }
+.held-actions button.armed { outline: 2px solid var(--held); }
+</style>
+<script>
+/* P1 approvals */
+(function () {
+  const pendingBody = document.getElementById("held-pending");
+  const decidedBody = document.getElementById("held-decided");
+  const errLine = document.getElementById("held-error");
+  let snap = "";
+
+  function age(ms) {
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return Math.round(s) + "s";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    if (s < 86400) return Math.round(s / 3600) + "h";
+    return Math.round(s / 86400) + "d";
+  }
+
+  function render(items) {
+    const pending = items.filter((i) => i.status === "pending");
+    const decided = items.filter((i) => i.status === "approved" || i.status === "rejected");
+    aegis.badge.approvals = pending.length;
+    if (!pending.length) {
+      pendingBody.innerHTML = `<tr><td colspan="6" class="empty">No pending reviews</td></tr>`;
+    } else {
+      pendingBody.innerHTML = pending.map((i) => `<tr data-ticket="${aegis.esc(i.ticket)}">
+        <td class="mono">${aegis.esc(i.ticket)}</td>
+        <td>${aegis.esc(i.key || "anonymous")}</td>
+        <td>${aegis.esc(i.category)}</td>
+        <td>${aegis.esc(i.reason)}</td>
+        <td class="mono">${age(i.created_at)}</td>
+        <td><div class="held-actions">
+          <input type="text" placeholder="note (optional)" maxlength="2000" aria-label="note for ${aegis.esc(i.ticket)}">
+          <button type="button" data-act="approve">Approve</button>
+          <button type="button" class="no" data-act="reject">Reject</button>
+        </div></td></tr>`).join("");
+    }
+    if (!decided.length) {
+      decidedBody.innerHTML = `<tr><td colspan="4" class="empty">None yet</td></tr>`;
+    } else {
+      decidedBody.innerHTML = decided.map((i) => `<tr>
+        <td class="mono">${aegis.esc(i.ticket)}</td>
+        <td><span class="pill ${i.status === "approved" ? "pass" : "block"}">${aegis.esc(i.status)}</span></td>
+        <td>${aegis.esc(i.decided_by)}</td>
+        <td>${aegis.esc(i.note)}</td></tr>`).join("");
+    }
+  }
+
+  async function loadHeld() {
+    const data = await aegis.get("/held?status=all");
+    const items = data.items || [];
+    const next = JSON.stringify(items);
+    aegis.badge.approvals = items.filter((i) => i.status === "pending").length;
+    if (next === snap) return;
+    snap = next;
+    errLine.textContent = "";
+    render(items);
+  }
+
+  pendingBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    if (btn.dataset.armed !== "1") {
+      for (const other of pendingBody.querySelectorAll("button[data-armed]")) {
+        other.dataset.armed = "";
+        other.classList.remove("armed");
+        other.textContent = other.dataset.act === "approve" ? "Approve" : "Reject";
+      }
+      btn.dataset.armed = "1";
+      btn.classList.add("armed");
+      btn.textContent = "Confirm?";
+      return;
+    }
+    const tr = btn.closest("tr");
+    const note = tr.querySelector("input").value;
+    errLine.textContent = "";
+    try {
+      const r = await fetch("/held/" + encodeURIComponent(tr.dataset.ticket) + "/" + btn.dataset.act, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      if (!r.ok) throw new Error(r.status === 409 ? "already decided" : String(r.status));
+      snap = "";
+      await loadHeld();
+    } catch (err) {
+      errLine.textContent = "Could not record the decision (" + err.message + ").";
+    }
+  });
+
+  aegis.onTick.push(async () => { await loadHeld(); });
+})();
+</script>
 <script>
 tick();
 </script>

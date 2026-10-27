@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS config_loads (
 	hash TEXT NOT NULL,
 	signed INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS held (
+	hash TEXT PRIMARY KEY,
+	ticket TEXT NOT NULL,
+	"key" TEXT NOT NULL DEFAULT '',
+	category TEXT NOT NULL DEFAULT '',
+	reason TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'pending',
+	created_at INTEGER NOT NULL,
+	decided_at INTEGER NOT NULL DEFAULT 0,
+	decided_by TEXT NOT NULL DEFAULT '',
+	note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS held_ticket ON held(ticket);
+CREATE INDEX IF NOT EXISTS held_status ON held(status);
 `
 
 // Open opens (creating if needed) the SQLite database and applies the schema.
@@ -56,11 +71,21 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate sqlite %s: %w", path, err)
 	}
 	return db, nil
+}
+
+// migrate applies the schema, then additive column changes. CREATE TABLE IF
+// NOT EXISTS does not add columns to a database that already exists, so each
+// new column is an ALTER that ignores "duplicate column name".
+func migrate(db *sql.DB) error {
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	return nil
 }
 
 func dsn(path string) string {

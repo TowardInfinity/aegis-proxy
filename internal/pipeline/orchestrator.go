@@ -2,14 +2,11 @@ package pipeline
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"guardrail/internal/audit"
@@ -99,6 +96,10 @@ type Config struct {
 	JudgeTriggers   []string
 	JudgeAlways     bool
 	JudgeFailClosed bool
+
+	// Held remembers escalations across requests. Nil gets an in-memory store,
+	// which is what tests use and which drops decisions on restart.
+	Held HeldStore
 }
 
 // JudgeVerdict is an LLM's decision on text the deterministic stages could
@@ -123,48 +124,17 @@ type Orchestrator struct {
 	ledger   Ledger
 	detector *security.Detector
 	limiter  *security.Limiter
-	held     heldSet
-}
-
-// heldSet remembers content the judge escalated, keyed by a hash of the
-// redacted text. Agents keep a held tool result in their history, so without
-// it the next turn would carry the content upstream as context.
-type heldSet struct {
-	mu      sync.Mutex
-	tickets map[[32]byte]heldEntry
-}
-
-type heldEntry struct{ ticket, reason string }
-
-const heldLimit = 10000
-
-func (h *heldSet) add(key [32]byte, e heldEntry) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.tickets == nil || len(h.tickets) >= heldLimit {
-		h.tickets = map[[32]byte]heldEntry{}
-	}
-	h.tickets[key] = e
-}
-
-func (h *heldSet) find(msgs []Message) (heldEntry, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, m := range msgs {
-		if m.Role != "user" || m.Content == "" {
-			continue
-		}
-		if e, ok := h.tickets[sha256.Sum256([]byte(m.Content))]; ok {
-			return e, true
-		}
-	}
-	return heldEntry{}, false
+	held     HeldStore
 }
 
 // New wires the orchestrator. cache and ledger may be nil when the feature is
 // disabled; every stage checks before use.
 func New(cfg Config, c Cache, ledger Ledger, limiter *security.Limiter) *Orchestrator {
-	return &Orchestrator{cfg: cfg, cache: c, ledger: ledger, detector: security.NewDetector(), limiter: limiter}
+	held := cfg.Held
+	if held == nil {
+		held = NewMemoryHeld()
+	}
+	return &Orchestrator{cfg: cfg, cache: c, ledger: ledger, detector: security.NewDetector(), limiter: limiter, held: held}
 }
 
 // run is the mutable per-request state. One struct means each stage reads and
@@ -358,16 +328,23 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 	if o.cfg.Judge == nil {
 		return Result{}, false
 	}
-	if e, ok := o.held.find(r.req.Messages); ok {
-		r.headers["X-Guardrail-Judge"] = "held"
-		r.headers["X-Guardrail-Ticket"] = e.ticket
-		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_held", Score: 1, Sample: e.ticket})
-		return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge, fmt.Sprintf(
-			"held for security review (ticket %s): %s. This conversation still contains it; start a new one (/clear in Claude Code).",
-			e.ticket, strings.TrimSuffix(e.reason, "."))), true
-	}
 	text := newestUserText(r.req.Messages)
-	if text == "" {
+	skipJudge := false
+	if text != "" {
+		hash, _ := hashHeld(text)
+		// An approval has to win before the judge runs: the verdict cache
+		// would just escalate the same text again.
+		if e, ok := o.held.Lookup(hash); ok && e.Status == HeldApproved {
+			r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_approved", Sample: e.Ticket})
+			r.headers["X-Guardrail-Judge"] = "approved"
+			r.headers["X-Guardrail-Ticket"] = e.Ticket
+			skipJudge = true
+		}
+	}
+	if e, ok := o.held.FindHeld(r.req.Messages); ok {
+		return o.blockHeld(r, e)
+	}
+	if skipJudge || text == "" {
 		return Result{}, false
 	}
 	trigger := o.judgeTrigger(r, text)
@@ -390,14 +367,55 @@ func (o *Orchestrator) stageJudge(ctx context.Context, r *run) (Result, bool) {
 		return Result{}, false
 	}
 	// The ticket derives from the content, so client retries and later turns
-	// that resend it all point SecOps at one review.
-	key := sha256.Sum256([]byte(text))
-	ticket := "SEC-" + strings.ToUpper(hex.EncodeToString(key[:4]))
-	o.held.add(key, heldEntry{ticket: ticket, reason: v.Reason})
-	r.headers["X-Guardrail-Ticket"] = ticket
-	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: ticket + " " + v.Category + ": " + v.Reason})
+	// that resend it all point SecOps at one review. Add keeps an existing
+	// row, including a decision, instead of opening a second ticket.
+	hash, ticket := hashHeld(text)
+	stored, err := o.held.Add(Held{
+		Hash:      hash,
+		Ticket:    ticket,
+		Key:       r.req.Key,
+		Category:  v.Category,
+		Reason:    v.Reason,
+		Status:    HeldPending,
+		CreatedAt: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		return o.fail(r, http.StatusServiceUnavailable, ActionBlock, StageJudge,
+			"the security judge escalated this request but the hold could not be recorded; try again shortly"), true
+	}
+	if stored.Status == HeldApproved {
+		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_approved", Sample: stored.Ticket})
+		r.headers["X-Guardrail-Judge"] = "approved"
+		r.headers["X-Guardrail-Ticket"] = stored.Ticket
+		return Result{}, false
+	}
+	if stored.Status == HeldRejected {
+		return o.blockHeld(r, stored)
+	}
+	r.headers["X-Guardrail-Ticket"] = stored.Ticket
+	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_escalate", Score: 1, Sample: stored.Ticket + " " + stored.Category + ": " + stored.Reason})
 	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge,
-		fmt.Sprintf("held for security review (ticket %s): %s", ticket, v.Reason)), true
+		fmt.Sprintf("held for security review (ticket %s): %s", stored.Ticket, stored.Reason)), true
+}
+
+// blockHeld stops a turn that still contains pending or rejected content.
+func (o *Orchestrator) blockHeld(r *run, e Held) (Result, bool) {
+	r.headers["X-Guardrail-Judge"] = "held"
+	r.headers["X-Guardrail-Ticket"] = e.Ticket
+	if e.Status == HeldRejected {
+		why := strings.TrimSpace(e.Note)
+		if why == "" {
+			why = e.Reason
+		}
+		r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_rejected", Score: 1, Sample: e.Ticket})
+		return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge, fmt.Sprintf(
+			"rejected by SecOps (ticket %s): %s. Start a new conversation without it.",
+			e.Ticket, strings.TrimSuffix(why, "."))), true
+	}
+	r.dec.RuleHits = append(r.dec.RuleHits, RuleHit{Rule: "judge_held", Score: 1, Sample: e.Ticket})
+	return o.fail(r, http.StatusForbidden, ActionBlock, StageJudge, fmt.Sprintf(
+		"held for security review (ticket %s): %s. This conversation still contains it; start a new one (/clear in Claude Code).",
+		e.Ticket, strings.TrimSuffix(e.Reason, "."))), true
 }
 
 // newestUserText is the newest user message with content: the turn the

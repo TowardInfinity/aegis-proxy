@@ -50,6 +50,7 @@ type Server struct {
 	orch     *pipeline.Orchestrator
 	router   map[string]*route.Adapter
 	limiter  *security.Limiter
+	held     pipeline.HeldStore
 	dev      bool
 	devLog   *log.Logger
 	adminTok string
@@ -59,6 +60,11 @@ type Server struct {
 func Build(cfg *config.Config, dev bool) (*Server, error) {
 	db, err := store.Open(cfg.Storage.SQLitePath)
 	if err != nil {
+		return nil, err
+	}
+	held, err := pipeline.OpenHeld(db)
+	if err != nil {
+		db.Close()
 		return nil, err
 	}
 	pricing := map[string]budget.Pricing{}
@@ -94,6 +100,7 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 		ledger:   ledger,
 		router:   adapters,
 		limiter:  limiter,
+		held:     held,
 		dev:      dev,
 		devLog:   log.New(os.Stderr, "", 0),
 		adminTok: os.Getenv("GUARDRAIL_ADMIN_TOKEN"),
@@ -123,6 +130,7 @@ func Build(cfg *config.Config, dev bool) (*Server, error) {
 		JudgeTriggers:   cfg.Judge.Triggers,
 		JudgeAlways:     cfg.Judge.Always,
 		JudgeFailClosed: cfg.Judge.FailClosed,
+		Held:            held,
 	}, c, ledgerAdapter{ledger: ledger, limits: limitsFrom(cfg.Budget), overrides: cfg.Budget.KeyOverrides}, limiter)
 	return s, nil
 }
@@ -204,6 +212,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/messages", s.guard("/v1/messages", s.handleMessages))
 	mux.HandleFunc("/v1/messages/count_tokens", s.guard("/v1/messages/count_tokens", s.handleCountTokens))
 	mux.HandleFunc("/v1/models", s.guard("/v1/models", s.handleModels))
+	mux.HandleFunc("GET /v1/tickets/{ticket}", s.guard("/v1/tickets/", s.handleTicket))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -249,6 +258,10 @@ func (s *Server) AdminHandler() http.Handler {
 		}
 		writeJSON(w, map[string]any{"rows": rows})
 	}))
+	// P1-P3
+	mux.HandleFunc("/held", s.admin(s.handleHeldList))
+	mux.HandleFunc("POST /held/{ticket}/approve", s.admin(s.handleHeldApprove))
+	mux.HandleFunc("POST /held/{ticket}/reject", s.admin(s.handleHeldReject))
 	return withNotFound(mux)
 }
 
@@ -258,7 +271,15 @@ func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+		case http.MethodPost:
+			// Approvals are the only admin writes. Everything else stays read-only.
+			if !strings.HasPrefix(r.URL.Path, "/held/") {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
@@ -272,12 +293,8 @@ func (s *Server) guard(path string, next func(http.ResponseWriter, *http.Request
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		if r.Method != http.MethodPost && path != "/v1/models" {
-			http.Error(sw, "method not allowed", http.StatusMethodNotAllowed)
-			s.accessLog(r, sw.status, start, nil)
-			return
-		}
-		if r.Method != http.MethodGet && path == "/v1/models" {
+		getOK := path == "/v1/models" || strings.HasPrefix(path, "/v1/tickets/")
+		if getOK && r.Method != http.MethodGet || !getOK && r.Method != http.MethodPost {
 			http.Error(sw, "method not allowed", http.StatusMethodNotAllowed)
 			s.accessLog(r, sw.status, start, nil)
 			return
@@ -348,15 +365,16 @@ func (w *statusWriter) Flush() {
 }
 
 // withNotFound makes unknown paths 404 explicitly instead of the mux's
-// redirect-to-slash behavior.
+// redirect-to-slash behavior. A matched request is handed to ServeHTTP, not
+// to the handler from Handler: Handler does not fill wildcard path values,
+// so PathValue would always be empty.
 func withNotFound(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h, pattern := mux.Handler(r)
-		if pattern == "" {
+		if _, pattern := mux.Handler(r); pattern == "" {
 			http.NotFound(w, r)
 			return
 		}
-		h.ServeHTTP(w, r)
+		mux.ServeHTTP(w, r)
 	})
 }
 
