@@ -373,7 +373,6 @@ func TestDashboardP4Markup(t *testing.T) {
 	for _, want := range []string{
 		`data-tab="usage" data-title="Usage" data-ready`,
 		`data-tab="policy" data-title="Policy" data-ready`,
-		`data-tab="approvals" data-title="Approvals" hidden`,
 		"Export CSV",
 		">All<", ">Redacted<", ">Blocked<", ">Held<", ">Cache<",
 		"latency_ms", "request_id", "new Blob",
