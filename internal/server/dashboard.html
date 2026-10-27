@@ -73,6 +73,17 @@ button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink
   </form>
   <section class="panel" data-tab="ledger" data-title="Live ledger">
   <section class="tiles" id="tiles"></section>
+  <div class="p4-filters" id="p4-filters">
+    <div class="p4-seg" id="p4-seg" role="tablist" aria-label="Ledger filter">
+      <button type="button" data-filter="all" class="on" aria-pressed="true">All</button>
+      <button type="button" data-filter="redact" aria-pressed="false">Redacted</button>
+      <button type="button" data-filter="block" aria-pressed="false">Blocked</button>
+      <button type="button" data-filter="held" aria-pressed="false">Held</button>
+      <button type="button" data-filter="cache" aria-pressed="false">Cache</button>
+    </div>
+    <input id="p4-q" type="search" placeholder="Employee, model, rule, ticket" aria-label="Search ledger" autocomplete="off">
+    <button type="button" id="p4-export">Export CSV</button>
+  </div>
   <section class="card">
     <table>
       <thead><tr>
@@ -89,9 +100,41 @@ button { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--ink
   <!-- P3 playground -->
   <section class="panel" data-tab="playground" data-title="Playground" hidden></section>
   <!-- P4 usage -->
-  <section class="panel" data-tab="usage" data-title="Usage" hidden></section>
+  <section class="panel" data-tab="usage" data-title="Usage" data-ready hidden>
+    <article class="card p4-card">
+      <div class="p4-head">
+        <h2>Requests per minute</h2>
+        <select id="p4-window" aria-label="Time window">
+          <option value="60" selected>Last 60 minutes</option>
+          <option value="240">Last 4 hours</option>
+          <option value="1440">Last 24 hours</option>
+        </select>
+      </div>
+      <div class="p4-legend">
+        <span><i class="swatch pass"></i>Passed</span>
+        <span><i class="swatch redact"></i>Redacted</span>
+        <span><i class="swatch block"></i>Blocked</span>
+        <span><i class="swatch cache"></i>Cache</span>
+      </div>
+      <p class="p4-note">Blocked includes requests held for review. Hover a bar for the counts.</p>
+      <div class="p4-chart p4-chart-scroll" id="p4-chart"></div>
+    </article>
+    <div class="p4-split">
+      <article class="card p4-card">
+        <h2>Spend today</h2>
+        <div id="p4-spend"><p class="p4-note">Loading…</p></div>
+      </article>
+      <article class="card p4-card">
+        <h2>Budgets</h2>
+        <p class="p4-note">Amber at 80% of the daily cap, red at the cap. A cap of 0 is unlimited.</p>
+        <div id="p4-budgets"></div>
+      </article>
+    </div>
+  </section>
   <!-- P4 policy -->
-  <section class="panel" data-tab="policy" data-title="Policy" hidden></section>
+  <section class="panel" data-tab="policy" data-title="Policy" data-ready hidden>
+    <div class="p4-grid" id="p4-policy"><p class="empty">Loading policy…</p></div>
+  </section>
 </main>
 <script>
 // The page carries no data. It reads the admin token from the URL fragment
@@ -220,6 +263,371 @@ $("tabs").addEventListener("click", (e) => {
 });
 </script>
 <!-- Feature scripts go below, one <script> block per packet, after the shared hooks. -->
+<style>
+/* P4 usage and policy */
+.panel[data-tab="usage"] { --cache: #2457c5; }
+@media (prefers-color-scheme: dark) {
+  .panel[data-tab="usage"] { --cache: #8eb6ff; }
+}
+#rows tr.p4-off { display: none; }
+.p4-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
+.p4-seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.p4-seg button { background: var(--panel); color: var(--muted); border: 1px solid var(--line); padding: 6px 10px; }
+.p4-seg button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+#p4-q { min-width: 16rem; }
+.p4-card { padding: 14px 16px; margin-bottom: 12px; }
+.p4-card h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
+.p4-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.p4-head h2 { margin: 0; }
+.p4-head select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.p4-note { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.p4-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.swatch.pass { background: var(--pass); }
+.swatch.redact { background: var(--redact); }
+.swatch.block { background: var(--block); }
+.swatch.cache { background: var(--cache); }
+.p4-chart-scroll { overflow-x: auto; }
+.p4-chart svg { display: block; min-width: 100%; }
+.p4-chart .pass { fill: var(--pass); }
+.p4-chart .redact { fill: var(--redact); }
+.p4-chart .block { fill: var(--block); }
+.p4-chart .cache { fill: var(--cache); }
+.p4-chart .zero { fill: var(--line); }
+.p4-chart text { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+.p4-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.p4-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.p4-emp { margin: 8px 0 12px; }
+.p4-name { font-family: var(--mono); font-size: 12px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p4-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.p4-track { flex: 1; height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.p4-fill { display: block; height: 100%; border-radius: 999px; }
+.p4-fill.spend { background: var(--ink); }
+.p4-fill.ok { background: var(--pass); }
+.p4-fill.warn { background: var(--redact); }
+.p4-fill.hot { background: var(--block); }
+.p4-val, .p4-unlimited { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p4-kv { display: grid; grid-template-columns: 9.5rem 1fr; gap: 4px 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.p4-kv dt { color: var(--muted); }
+.p4-kv dd { margin: 0; }
+.p4-card dl { margin: 0; }
+@media (max-width: 640px) { .p4-split { grid-template-columns: 1fr; } .p4-kv { grid-template-columns: 1fr; } }
+</style>
+<script>
+/* P4 usage and policy */
+let ledgerFilter = "all";
+let policyShown = false;
+
+function ledgerMatch(r) {
+  if (!r) return false;
+  const cls = decision(r)[0];
+  if (ledgerFilter === "redact" && cls !== "redact") return false;
+  if (ledgerFilter === "block" && cls !== "block") return false;
+  if (ledgerFilter === "held" && cls !== "held") return false;
+  if (ledgerFilter === "cache" && r.Action !== "cache_hit" && !r.CacheHit) return false;
+  const q = ($("p4-q").value || "").trim().toLowerCase();
+  if (!q) return true;
+  const bits = [r.Key || "anonymous", r.Model, r.RequestID, r.request_id];
+  for (const h of r.RuleHits || []) {
+    bits.push(h.rule, h.sample);
+    if (typeof label !== "undefined" && label[h.rule]) bits.push(label[h.rule]);
+  }
+  return bits.join("\n").toLowerCase().includes(q);
+}
+
+function applyLedgerFilter() {
+  const body = $("rows");
+  if (!body) return;
+  let shown = 0, data = 0;
+  for (const tr of body.querySelectorAll("tr[data-i]")) {
+    data++;
+    const ok = ledgerMatch(aegis.rows[Number(tr.dataset.i)]);
+    tr.classList.toggle("p4-off", !ok);
+    if (ok) shown++;
+  }
+  let note = $("p4-none");
+  if (data > 0 && shown === 0) {
+    if (!note) {
+      note = document.createElement("tr");
+      note.id = "p4-none";
+      note.innerHTML = '<td colspan="8" class="empty">Nothing matches this filter.</td>';
+      body.appendChild(note);
+    }
+  } else if (note) {
+    note.remove();
+  }
+}
+
+function csvCell(v) {
+  let s = String(v ?? "");
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function exportCSV() {
+  const header = ["time", "employee", "decision", "rules", "model", "tokens", "latency_ms", "cost_usd", "request_id"];
+  const lines = [header.join(",")];
+  for (const r of aegis.rows) {
+    if (!ledgerMatch(r)) continue;
+    const rules = (r.RuleHits || []).map((h) => h.rule).join(" ");
+    const cols = [
+      r.TS || "",
+      r.Key || "anonymous",
+      decision(r)[1],
+      rules,
+      r.Model || "",
+      (r.InputTokens || 0) + (r.OutputTokens || 0),
+      r.LatencyMS || 0,
+      r.CostUSD || 0,
+      r.RequestID || r.request_id || "",
+    ];
+    lines.push(cols.map(csvCell).join(","));
+  }
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "aegis-ledger.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+$("p4-seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-filter]");
+  if (!b) return;
+  ledgerFilter = b.dataset.filter;
+  for (const btn of $("p4-seg").querySelectorAll("button")) {
+    const on = btn === b;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  applyLedgerFilter();
+});
+$("p4-q").addEventListener("input", applyLedgerFilter);
+$("p4-export").addEventListener("click", exportCSV);
+
+function pctWidth(n) {
+  if (!isFinite(n) || n < 0) return 0;
+  if (n > 100) return 100;
+  return Math.round(n * 10) / 10;
+}
+function usd(n) {
+  const v = Number(n) || 0;
+  return "$" + (Math.abs(v) >= 1 ? v.toFixed(2) : v.toFixed(4));
+}
+function budgetKeys(body) {
+  return (body && body.keys ? body.keys : []).slice();
+}
+function minuteLabel(t, span) {
+  const d = new Date(t * 1000);
+  if (span > 180) return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function drawSeries(series, minutes) {
+  const pts = (series && series.points) || [];
+  if (!pts.length) {
+    $("p4-chart").innerHTML = `<p class="p4-note">No traffic in this window.</p>`;
+    return;
+  }
+  const totals = pts.map((p) => (p.pass || 0) + (p.redact || 0) + (p.block || 0) + (p.cache_hit || 0));
+  const max = Math.max(1, ...totals);
+  const bw = 8, gap = 3, plotH = 88, base = 100;
+  const W = Math.max(pts.length * (bw + gap) + gap, 280);
+  const bars = pts.map((p, i) => {
+    const x = gap + i * (bw + gap);
+    const segs = [
+      ["pass", p.pass || 0],
+      ["cache", p.cache_hit || 0],
+      ["redact", p.redact || 0],
+      ["block", p.block || 0],
+    ];
+    let y = base;
+    let rects = "";
+    const total = totals[i];
+    if (!total) rects = `<rect class="zero" x="${x}" y="${base - 1}" width="${bw}" height="1"></rect>`;
+    for (const [cls, n] of segs) {
+      if (!n) continue;
+      const h = (n / max) * plotH;
+      y -= h;
+      rects += `<rect class="${cls}" x="${x}" y="${y.toFixed(2)}" width="${bw}" height="${h.toFixed(2)}"></rect>`;
+    }
+    const when = minuteLabel(p.t, minutes);
+    const title = `${when} · pass ${p.pass || 0}, redact ${p.redact || 0}, block ${p.block || 0}, cache ${p.cache_hit || 0}, ${usd(p.usd)}`;
+    return `<g><title>${aegis.esc(title)}</title>${rects}</g>`;
+  }).join("");
+  const first = aegis.esc(minuteLabel(pts[0].t, minutes));
+  const last = pts.length > 1 ? `<text x="${W - gap}" y="116" text-anchor="end">${aegis.esc(minuteLabel(pts[pts.length - 1].t, minutes))}</text>` : "";
+  $("p4-chart").innerHTML = `<svg width="${W}" height="124" role="img" aria-label="Requests per minute">${bars}<text x="${gap}" y="116">${first}</text>${last}</svg>`;
+}
+
+function drawSpend(body) {
+  const keys = budgetKeys(body).filter((k) => (k.usd_today || 0) > 0 || (k.tokens_today || 0) > 0);
+  keys.sort((a, b) => (b.usd_today || 0) - (a.usd_today || 0) || (b.tokens_today || 0) - (a.tokens_today || 0));
+  if (!keys.length) {
+    $("p4-spend").innerHTML = `<p class="p4-note">No spend recorded today.</p>`;
+    return;
+  }
+  const maxUSD = Math.max(...keys.map((k) => k.usd_today || 0));
+  $("p4-spend").innerHTML = keys.map((k) => {
+    const name = k.key || "anonymous";
+    const pct = maxUSD > 0 ? pctWidth(((k.usd_today || 0) / maxUSD) * 100) : 0;
+    const label = usd(k.usd_today) + " · " + (k.tokens_today || 0).toLocaleString() + " tok";
+    return `<div class="p4-emp"><div class="p4-name" title="${aegis.esc(name)}">${aegis.esc(name)}</div><div class="p4-row"><span class="p4-track"><span class="p4-fill spend" style="width:${pct}%"></span></span><span class="p4-val">${aegis.esc(label)}</span></div></div>`;
+  }).join("");
+}
+
+function capLine(used, cap, kind) {
+  const limited = cap > 0;
+  let text;
+  if (kind === "tok") {
+    const u = Math.round(used || 0).toLocaleString();
+    text = limited ? `${u} / ${Math.round(cap).toLocaleString()} tokens` : `${u} tokens · unlimited`;
+  } else {
+    text = limited ? `${usd(used)} / ${usd(cap)}` : `${usd(used)} · unlimited`;
+  }
+  if (!limited) return `<div class="p4-row"><span class="p4-unlimited">${aegis.esc(text)}</span></div>`;
+  const r = (used || 0) / cap;
+  const tone = r >= 1 ? "hot" : r >= 0.8 ? "warn" : "ok";
+  return `<div class="p4-row"><span class="p4-track"><span class="p4-fill ${tone}" style="width:${pctWidth(r * 100)}%"></span></span><span class="p4-val">${aegis.esc(text)}</span></div>`;
+}
+
+function drawCaps(body) {
+  const keys = budgetKeys(body);
+  if (!keys.length) {
+    $("p4-budgets").innerHTML = `<p class="p4-note">No employee budgets yet.</p>`;
+    return;
+  }
+  const heat = (k) => Math.max(k.token_cap > 0 ? (k.tokens_today || 0) / k.token_cap : 0, k.usd_cap > 0 ? (k.usd_today || 0) / k.usd_cap : 0);
+  keys.sort((a, b) => heat(b) - heat(a) || String(a.key).localeCompare(String(b.key)));
+  $("p4-budgets").innerHTML = keys.map((k) => {
+    const name = k.key || "anonymous";
+    let lines = capLine(k.tokens_today, k.token_cap, "tok");
+    if ((k.usd_cap || 0) > 0 || (k.usd_today || 0) > 0) lines += capLine(k.usd_today, k.usd_cap, "usd");
+    return `<div class="p4-emp"><div class="p4-name" title="${aegis.esc(name)}">${aegis.esc(name)}</div>${lines}</div>`;
+  }).join("");
+}
+
+function chips(list) {
+  if (!list || !list.length) return `<span class="p4-note">none</span>`;
+  return `<span class="chips">${list.map((x) => `<span class="chip">${aegis.esc(x)}</span>`).join("")}</span>`;
+}
+function card(title, body) {
+  return `<article class="card p4-card"><h2>${aegis.esc(title)}</h2>${body}</article>`;
+}
+function kv(k, v) {
+  return `<div class="p4-kv"><dt>${aegis.esc(k)}</dt><dd>${aegis.esc(v)}</dd></div>`;
+}
+function kvHTML(k, html) {
+  return `<div class="p4-kv"><dt>${aegis.esc(k)}</dt><dd>${html}</dd></div>`;
+}
+function defs(inner) { return `<dl>${inner}</dl>`; }
+function yn(b) { return b ? "yes" : "no"; }
+function prettyDur(s) {
+  if (!s) return "—";
+  return String(s).replace(/(\d+h)0m0s$/, "$1").replace(/(\d+m)0s$/, "$1");
+}
+function capText(n, kind) {
+  if (!(Number(n) > 0)) return "unlimited";
+  return kind === "usd" ? usd(n) : Number(n).toLocaleString();
+}
+function rate(n) { return n > 0 ? Number(n).toLocaleString() + " / min" : "off"; }
+
+function drawPolicy(p) {
+  p = p || {};
+  const sec = p.security || {};
+  const judge = p.judge || {};
+  const bud = p.budget || {};
+  const tam = p.tamper || {};
+  const resp = p.response || {};
+  const cache = p.cache || {};
+  const th = sec.thresholds || {};
+  const thRows = Object.keys(th).sort().map((n) => kv(n, Number(th[n]).toFixed(2))).join("");
+  const overrides = bud.key_overrides || {};
+  const names = Object.keys(overrides).sort();
+  const overrideRows = names.length
+    ? names.map((name) => {
+        const o = overrides[name] || {};
+        const tok = o.daily_tokens > 0 ? Number(o.daily_tokens).toLocaleString() + " tokens/day" : "tokens: default";
+        const money = o.daily_usd > 0 ? usd(o.daily_usd) + "/day" : "USD: default";
+        return kv(name, tok + " · " + money);
+      }).join("")
+    : `<p class="p4-note">No per-employee overrides.</p>`;
+  const routes = (p.routes || []).map((r) => `<tr><td>${aegis.esc(r.name)}</td><td>${aegis.esc(r.wire)}</td><td>${chips(r.models)}</td></tr>`).join("");
+  $("p4-policy").innerHTML = [
+    card("Detectors", defs([
+      kv("Redaction", p.redact ? "on" : "off"),
+      kvHTML("Enabled", chips(p.detectors)),
+      kv("Response PII", resp.redact_pii ? "redact" : "off"),
+      kv("Response secrets", resp.block_secrets ? "block" : "off"),
+      kv("Response injection", resp.block_injection ? "block" : "flag only"),
+    ].join(""))),
+    card("Security", defs(thRows + [
+      kv("Flag at", Number(sec.flag_threshold || 0).toFixed(2)),
+      kv("Monitor only", yn(sec.monitor)),
+      kv("Max body", (Number(sec.max_body_bytes) || 0).toLocaleString() + " bytes"),
+      kv("Max tokens", (Number(sec.max_tokens) || 0).toLocaleString()),
+      kv("Per key", rate(sec.rate_limit_per_min)),
+      kv("Per IP", rate(sec.rate_limit_per_min_ip)),
+    ].join(""))),
+    card("Judge", defs([
+      kv("Enabled", yn(judge.enabled)),
+      kv("Model", judge.model || "—"),
+      kv("Timeout", prettyDur(judge.timeout)),
+      kv("Fail closed", yn(judge.fail_closed)),
+      kv("Always", yn(judge.always)),
+      kvHTML("Triggers", chips(judge.triggers)),
+    ].join(""))),
+    card("Budget", `<p class="p4-note">A zero override keeps the per-key default. A zero default cap is unlimited.</p>` + defs([
+      kv("Soft nudge", yn(bud.soft_nudge)),
+      kv("Global USD / day", capText(bud.daily_usd, "usd")),
+      kv("Global tokens / day", capText(bud.daily_tokens, "tok")),
+      kv("Hourly tokens / key", capText(bud.hourly_tokens, "tok")),
+      kv("Default USD / key", capText(bud.per_key_daily_usd, "usd")),
+      kv("Default tokens / key", capText(bud.per_key_daily_tokens, "tok")),
+    ].join("")) + overrideRows),
+    card("Cache", defs([
+      kv("Enabled", yn(cache.enabled)),
+      kv("TTL", prettyDur(cache.ttl)),
+      kv("Size", (Number(cache.size) || 0).toLocaleString() + " entries"),
+    ].join(""))),
+    card("Routes", routes ? `<table><thead><tr><th>Route</th><th>Wire</th><th>Client models</th></tr></thead><tbody>${routes}</tbody></table>` : `<p class="p4-note">No routes.</p>`),
+    card("Tamper", defs([
+      kv("Checking", tam.enabled ? "on" : "off"),
+      kv("Signature at startup", tam.signature_verified ? "verified" : "not verified"),
+    ].join(""))),
+  ].join("");
+}
+
+async function refreshUsage() {
+  const minutes = Number($("p4-window").value) || 60;
+  try {
+    const [series, budgets] = await Promise.all([
+      aegis.get("/timeseries?minutes=" + encodeURIComponent(minutes)),
+      aegis.get("/budgets"),
+    ]);
+    drawSeries(series, minutes);
+    drawSpend(budgets);
+    drawCaps(budgets);
+  } catch (e) {
+    $("p4-chart").innerHTML = `<p class="empty">Usage data unavailable (${aegis.esc(e.message)}).</p>`;
+  }
+  try {
+    drawPolicy(await aegis.get("/policy"));
+    policyShown = true;
+  } catch (e) {
+    if (!policyShown) $("p4-policy").innerHTML = `<p class="empty">Policy unavailable (${aegis.esc(e.message)}).</p>`;
+  }
+}
+$("p4-window").addEventListener("change", () => { refreshUsage(); });
+aegis.onTick.push(async () => {
+  applyLedgerFilter();
+  await refreshUsage();
+});
+</script>
 <script>
 tick();
 </script>
