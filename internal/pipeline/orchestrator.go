@@ -564,6 +564,11 @@ func (o *Orchestrator) stageBudget(r *run) (Result, bool) {
 		r.req.Messages = append([]Message{{Role: "system", Content: SoftNudgeText}}, r.req.Messages...)
 	}
 	r.step(StageBudget, "pass", o.budgetDetail(r), start)
+	// The header is chosen here, before any bytes go out. A stream sends its
+	// headers before Record runs, so the estimate stands in for this request.
+	if rem, ok := remainingTokens(o.ledger, r.req.Key, r.dec.EstimatedTokens); ok {
+		r.headers["X-Guardrail-Budget-Remaining-Tokens"] = fmt.Sprintf("%d", rem)
+	}
 	return Result{}, false
 }
 

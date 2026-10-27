@@ -106,6 +106,30 @@ func (o *Orchestrator) budgetDetail(r *run) string {
 	return fmt.Sprintf("%d/%d tokens today", used, ceiling)
 }
 
+// remainingTokens is the daily token ceiling minus today's spend minus this
+// request's estimate, floored at 0. The second result is false when there is
+// nothing to report: no ledger, a ledger that does not track a daily token
+// ceiling, or a ceiling of 0 (unlimited). Record has not run yet, because
+// the response headers, including on a stream, are already committed.
+func remainingTokens(ledger Ledger, key string, estimated int) (int, bool) {
+	if ledger == nil {
+		return 0, false
+	}
+	tb, ok := ledger.(DailyTokenBudget)
+	if !ok {
+		return 0, false
+	}
+	ceiling, used := tb.DailyTokens(key)
+	if ceiling <= 0 {
+		return 0, false
+	}
+	rem := ceiling - used - estimated
+	if rem < 0 {
+		rem = 0
+	}
+	return rem, true
+}
+
 func scanBlockDetail(hits []RuleHit) string {
 	for i := len(hits) - 1; i >= 0; i-- {
 		if hits[i].Rule == "output_injection" {
