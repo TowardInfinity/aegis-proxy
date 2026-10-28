@@ -1,0 +1,4 @@
+# Fake fixtures in the DLP detector tests (example JWT, short sk_live_ string, client_secret).
+a1f5eb4f6ee31a58b4d3f6f52162efec11f86d7b:internal/dlp/dlp_test.go:stripe-access-token:51
+a1f5eb4f6ee31a58b4d3f6f52162efec11f86d7b:internal/dlp/dlp_test.go:generic-api-key:52
+a1f5eb4f6ee31a58b4d3f6f52162efec11f86d7b:internal/dlp/dlp_test.go:jwt:25
