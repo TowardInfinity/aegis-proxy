@@ -113,7 +113,9 @@ judge:
   timeout: 5s
   # Judge only the newest message, and only when one of these appears or a
   # security rule scores in the grey zone. always: true judges every request.
-  triggers: ["confidential", "internal use only", "do not distribute", "forecast", "acquisition", "merger", "roadmap"]
+  triggers: ["confidential", "internal use only", "do not distribute", "forecast", "acquisition", "merger", "roadmap",
+             "hack", "exploit", "malware", "ransomware", "keylogger", "phishing", "brute force", "crack", "ddos",
+             "reverse shell", "privilege escalation", "bypass", "steal"]
   always: false
   # true: refuse the request (503) when the judge is down. false: pass it with
   # an audit note.

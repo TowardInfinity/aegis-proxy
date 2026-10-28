@@ -62,6 +62,7 @@ Tool results are scanned like any other message, so a secret in a file the agent
 Regex can't tell a board pack from a weather forecast. Set `judge.enabled: true` and point `judge.base_url` at any OpenAI-compatible endpoint (the company's own model in production, OpenRouter for the demo). When the newest message contains a trigger word (`confidential`, `forecast`, `merger`, `roadmap` and the others in `judge.triggers`), Aegis asks a small judge model whether the text may leave. The judge sees the text after redaction, so it never receives the secrets or PII the detectors found.
 
 - **Allow**: the request continues. A weather forecast trips the trigger and passes.
+- **Hacking requests** use the same path. Words such as `hack`, `keylogger`, `phishing` or `bypass` call the judge, which holds requests to write malware, break into accounts, phish or evade security tools (category `malicious cyber`). SecOps can approve an authorized test. Defensive questions, such as how to fix a SQL injection in your own code, pass.
 - **Escalate**: the request gets a 403 (a 400 on the Anthropic wire, so Claude Code shows the message) with a ticket (`SEC-…`), the category and the judge's reason. The ticket waits in the SecOps queue.
 - SecOps approves or rejects it (`POST /held/{ticket}/approve|reject` with an optional note, or from the portal). An approved text passes on resend without asking the judge again. A rejected text keeps blocking.
 - The employee can check their own ticket at `GET /v1/tickets/{ticket}` with their own token. Another employee's token gets 404.
