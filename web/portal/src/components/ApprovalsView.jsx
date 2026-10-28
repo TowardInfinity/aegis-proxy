@@ -44,7 +44,7 @@ export default function ApprovalsView({ onResolved }) {
     const messages = [pendingR, allR]
       .filter((result) => result.status === 'rejected')
       .map((result) => result.reason?.message || 'Proxy unreachable');
-    setError(messages.length ? messages.join(' · ') : null);
+    setError(messages.length ? [...new Set(messages)].join(' · ') : null);
     if (pendingR.status === 'fulfilled') {
       setPending(pendingR.value);
       setPendingLoaded(true);

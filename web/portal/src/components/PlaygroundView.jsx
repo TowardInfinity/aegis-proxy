@@ -195,7 +195,7 @@ export default function PlaygroundView() {
                       {checkResult.judge.triggered_by || '—'} · escalate {String(checkResult.judge.escalate)}
                       {checkResult.judge.category ? ` · ${checkResult.judge.category}` : ''}
                       {checkResult.judge.reason ? ` · ${checkResult.judge.reason}` : ''}
-                      {Number.isFinite(checkResult.judge.ms) ? ` · ${checkResult.judge.ms} ms` : ''}
+                      {Number.isFinite(checkResult.judge.ms) ? ` · ${Math.round(checkResult.judge.ms)} ms` : ''}
                     </div>
                   ) : (
                     <div>No judge verdict.</div>

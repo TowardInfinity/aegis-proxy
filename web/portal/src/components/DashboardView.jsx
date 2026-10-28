@@ -101,7 +101,11 @@ export default function DashboardView({ onNavigateToPlayground, onSelectEvent })
   const [ledger, setLedger] = useState(null);
   const [hourlyTrends, setHourlyTrends] = useState(null);
 
-  useEffect(() => () => { alive.current = false; }, []);
+  // StrictMode mounts, unmounts and remounts in dev, so set the flag on every mount.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const fetchDashboardData = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshing(true);
@@ -114,7 +118,7 @@ export default function DashboardView({ onNavigateToPlayground, onSelectEvent })
     if (!alive.current) return;
 
     const messages = [statsR, heldR, seriesR, ledgerR].map(failureMessage).filter(Boolean);
-    setError(messages.length ? messages.join(' · ') : null);
+    setError(messages.length ? [...new Set(messages)].join(' · ') : null);
     if (statsR.status === 'fulfilled') setStats(statsR.value);
     if (heldR.status === 'fulfilled') setPendingCount(heldR.value.length);
     if (seriesR.status === 'fulfilled') setHourlyTrends(seriesR.value.points);

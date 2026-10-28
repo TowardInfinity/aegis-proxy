@@ -253,7 +253,7 @@ export const ApiService = {
         },
         body: JSON.stringify({
           model: 'aipro-chat',
-          max_tokens: 200,
+          max_tokens: 800,
           messages: [{ role: 'user', content }],
         }),
       });

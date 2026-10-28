@@ -44,7 +44,7 @@ export default function PipelineTraceViewer({ trace }) {
                 <div style={{ width: `${width}%`, height: '100%', borderRadius: '99px', background: 'var(--accent-cyan)' }} />
               </div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-dim)', minWidth: '64px', textAlign: 'right' }}>
-                {knownMs ? `${ms} ms` : '—'}
+                {knownMs ? `${ms < 10 ? ms.toFixed(2) : Math.round(ms)} ms` : '—'}
               </span>
             </div>
             {step.detail ? (

@@ -70,8 +70,8 @@ export default function SystemHealthView() {
 
   const banner = [dataPlane, adminPlane]
     .filter((row) => row && !row.ok)
-    .map((row) => row.detail)
-    .join(' · ');
+    .map((row) => row.detail);
+  const bannerText = [...new Set(banner)].join(' · ');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -87,7 +87,7 @@ export default function SystemHealthView() {
         </button>
       </div>
 
-      <ErrorBanner message={banner} />
+      <ErrorBanner message={bannerText} />
 
       <div className="glass-card" style={{ overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
