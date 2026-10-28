@@ -5,8 +5,9 @@
 #
 #   scripts/demo-traffic.sh [base_url]     default http://localhost:8080
 #
-# Budget tallies live in memory: restart the proxy before a second run, or the
-# intern starts out already over the cap.
+# Budget tallies are seeded from today's audit rows, so a restart does not reset
+# them: start the proxy on a fresh guardrail.db before a second run, or the
+# intern starts out over the cap and an approved board pack passes.
 set -u
 BASE=${1:-http://localhost:8080}
 MODEL=${DEMO_MODEL:-deepseek/deepseek-v4.1-flash-1017}

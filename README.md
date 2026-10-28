@@ -145,7 +145,6 @@ Stats reports `tokens_saved`, `usd_saved`, `usd_spent`, and the cache hit rate s
 - **Config signing is fail-closed, not tamper-evident against the operator.** The proxy refuses an unsigned or modified config when `security.tamper` is true, but the operator can flip the flag and re-sign. That is the honest boundary of a local proxy.
 - **The admin token comes from `GUARDRAIL_ADMIN_TOKEN`.** If the variable is unset, the admin plane returns 404 for every request.
 - **Any bearer token is accepted as an employee identity.** There is no key registry yet, so budgets and tickets key on whatever token the client sends. Put the proxy behind your SSO or issue tokens from the `apiKeyHelper`.
-- **Budget counters are in memory.** They reset on restart; the ledger and held decisions do not.
 - **One host, one config, one SQLite writer.** No multi-tenant shape, no distributed cache, no HA.
 - **Config is read at startup only.** Change, sign, restart.
 
