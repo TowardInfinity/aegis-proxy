@@ -78,7 +78,7 @@ export function NavigationProvider({ children, initialRoute = 'dashboard' }) {
   const currentRouteMeta = ROUTES.find(r => r.id === currentRoute) || ROUTES[0];
 
   const breadcrumbs = [
-    { label: 'Aegis', href: '#/dashboard' },
+    { label: 'NextGen Guardians', href: '#/dashboard' },
     { label: currentRouteMeta.category, href: null },
     { label: currentRouteMeta.title, href: currentRouteMeta.path }
   ];

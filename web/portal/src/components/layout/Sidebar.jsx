@@ -173,7 +173,7 @@ export default function Sidebar({
           {!isCollapsed && (
             <div className="brand-text-block">
               <div className="brand-title">
-                Aegis
+                NextGen Guardians
               </div>
               <div className="brand-subtitle">SECOPS CONSOLE</div>
             </div>

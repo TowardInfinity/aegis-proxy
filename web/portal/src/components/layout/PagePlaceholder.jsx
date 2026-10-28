@@ -5,7 +5,7 @@ export default function PagePlaceholder() {
 
   return (
     <div className="glass-card" style={{ padding: '28px', maxWidth: '720px' }}>
-      <h1 style={{ fontSize: '1.3rem', margin: '0 0 8px 0' }}>{currentRouteMeta?.title || 'Aegis'}</h1>
+      <h1 style={{ fontSize: '1.3rem', margin: '0 0 8px 0' }}>{currentRouteMeta?.title || 'NextGen Guardians'}</h1>
       <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
         {currentRouteMeta?.description || 'This page is not wired to the proxy.'}
       </p>

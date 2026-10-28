@@ -184,7 +184,7 @@ export default function DashboardView({ onNavigateToPlayground, onSelectEvent })
             <span className="badge badge-cyan">24H</span>
           </div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>
-            Aegis traffic, blocks, and spend
+            NextGen Guardians traffic, blocks, and spend
           </h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '4px', margin: 0 }}>
             Live totals from the admin plane. The chart is the last 24 hours.

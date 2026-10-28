@@ -109,7 +109,7 @@ export default function EventDetailModal({ event, onClose }) {
           <div>
             <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>MASKED SAMPLES</div>
             <p style={{ margin: '0 0 8px 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Aegis never stores prompts. Masked samples only.
+              NextGen Guardians never stores prompts. Masked samples only.
             </p>
             {samples.length === 0 ? (
               <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>No masked samples on this row.</div>

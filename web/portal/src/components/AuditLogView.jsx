@@ -71,7 +71,7 @@ export default function AuditLogView({ onSelectEvent }) {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(filteredEvents, null, 2));
     const link = document.createElement('a');
     link.setAttribute('href', dataStr);
-    link.setAttribute('download', `aegis_audit_${Date.now()}.json`);
+    link.setAttribute('download', `nextgen_guardians_audit_${Date.now()}.json`);
     link.click();
   };
 
@@ -93,7 +93,7 @@ export default function AuditLogView({ onSelectEvent }) {
     const csvContent = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
     const link = document.createElement('a');
     link.setAttribute('href', 'data:text/csv;charset=utf-8,' + encodeURIComponent(csvContent));
-    link.setAttribute('download', `aegis_audit_${Date.now()}.csv`);
+    link.setAttribute('download', `nextgen_guardians_audit_${Date.now()}.csv`);
     link.click();
   };
 

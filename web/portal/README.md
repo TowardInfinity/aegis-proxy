@@ -1,6 +1,6 @@
-# Aegis portal
+# NextGen Guardians portal
 
-SecOps UI for aegis-proxy. The dev server listens on port 3000.
+SecOps UI for the NextGen Guardians proxy. The dev server listens on port 3000.
 
 It proxies `/admin` to `127.0.0.1:8081` and adds `Authorization: Bearer $AEGIS_ADMIN_TOKEN`. `/v1` and `/healthz` go to `localhost:8080`. The token never enters browser code.
 
