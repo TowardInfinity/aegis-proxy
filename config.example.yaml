@@ -117,7 +117,7 @@ judge:
   always: false
   # true: refuse the request (503) when the judge is down. false: pass it with
   # an audit note.
-  fail_closed: false
+  fail_closed: true
   # policy: "" uses the built-in policy; replace it with your classification policy.
 
 # Optional ML classifier contract from DESIGN.md. This build is regex-only, so
