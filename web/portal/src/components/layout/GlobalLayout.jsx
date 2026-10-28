@@ -3,6 +3,7 @@ import Header from './Header';
 import Sidebar from './Sidebar';
 import StatusBar from './StatusBar';
 import PagePlaceholder from './PagePlaceholder';
+import { ApiService } from '../../services/api';
 
 export default function GlobalLayout({ children }) {
   const [isCollapsed, setIsCollapsed] = useState(() => {
@@ -39,6 +40,15 @@ export default function GlobalLayout({ children }) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [mobileOpen]);
+
+  useEffect(() => {
+    const tick = () => {
+      ApiService.getStats().catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   // Prevent background scroll when mobile sidebar drawer is open
   useEffect(() => {

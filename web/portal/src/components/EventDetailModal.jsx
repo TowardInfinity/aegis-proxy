@@ -1,15 +1,21 @@
-import React from 'react';
+import { formatUsd } from '../services/api';
+import PipelineTraceViewer from './PipelineTraceViewer';
+
+function when(ts) {
+  if (!ts) return '—';
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString();
+}
 
 export default function EventDetailModal({ event, onClose }) {
   if (!event) return null;
+  const samples = Array.isArray(event.samples) ? event.samples : [];
 
   return (
     <div style={{
       position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+      inset: 0,
       background: 'rgba(4, 7, 13, 0.75)',
       backdropFilter: 'blur(8px)',
       display: 'flex',
@@ -20,135 +26,102 @@ export default function EventDetailModal({ event, onClose }) {
     }}>
       <div className="glass-card" style={{
         width: '100%',
-        maxWidth: '720px',
+        maxWidth: '860px',
         maxHeight: '90vh',
         display: 'flex',
         flexDirection: 'column',
         borderRadius: '16px',
         border: '1px solid var(--border-highlight)',
-        overflow: 'hidden',
-        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.7)'
+        overflow: 'hidden'
       }}>
-        {/* Header */}
         <div style={{
           padding: '18px 24px',
           borderBottom: '1px solid var(--border-subtle)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          background: 'rgba(15, 23, 42, 0.9)'
+          gap: '12px'
         }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span className={`badge ${event.riskLevel === 'CRITICAL' ? 'badge-critical' : event.riskLevel === 'HIGH' ? 'badge-high' : 'badge-low'}`}>
-                {event.riskLevel} RISK (SCORE: {event.riskScore})
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span className={`badge ${event.riskLevel === 'CRITICAL' ? 'badge-critical' : event.riskLevel === 'HIGH' ? 'badge-high' : event.riskLevel === 'MEDIUM' ? 'badge-medium' : 'badge-low'}`}>
+                {event.riskLevel} · {event.riskScore}
               </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-dim)' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-dim)' }}>
                 {event.requestId}
               </span>
             </div>
-            <h3 style={{ fontSize: '1.1rem', margin: '4px 0 0 0' }}>Forensic Audit Event Inspection</h3>
+            <h3 style={{ fontSize: '1.1rem', margin: '4px 0 0 0' }}>Ledger row</h3>
           </div>
-
-          <button
-            id="btn-close-modal"
-            onClick={onClose}
-            className="btn btn-secondary"
-            style={{ padding: '4px 10px', fontSize: '0.8rem' }}
-          >
-            ✕ Close
+          <button id="btn-close-modal" onClick={onClose} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
+            Close
           </button>
         </div>
 
-        {/* Content Body */}
         <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Metadata Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', fontSize: '0.8rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', fontSize: '0.8rem' }}>
             <div style={{ padding: '10px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
-              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>USER & ROLE</div>
-              <strong style={{ color: 'var(--text-main)' }}>{event.userId}</strong>
-              <div style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)' }}>Role: {event.userRole}</div>
+              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>EMPLOYEE</div>
+              <strong>{event.userId || '—'}</strong>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{when(event.timestamp)}</div>
             </div>
-
             <div style={{ padding: '10px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
-              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>ENFORCED ACTION</div>
-              <strong style={{
-                color: event.action === 'BLOCK' ? 'var(--accent-rose)' : event.action === 'REVIEW' ? 'var(--accent-amber)' : 'var(--accent-emerald)'
-              }}>
-                {event.action}
+              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>ACTION</div>
+              <strong style={{ color: event.action === 'BLOCK' ? 'var(--accent-rose)' : event.action === 'REVIEW' ? 'var(--accent-amber)' : 'var(--accent-emerald)' }}>
+                {event.action || '—'}
               </strong>
-              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Status: {event.approvalStatus || 'NONE'}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{event.rawAction || '—'}{event.stage ? ` · ${event.stage}` : ''}</div>
             </div>
-
             <div style={{ padding: '10px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
-              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>MODEL & SPEND</div>
-              <strong style={{ color: 'var(--text-main)' }}>{event.model}</strong>
+              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>MODEL AND SPEND</div>
+              <strong>{event.model || '—'}</strong>
               <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                Tokens: {event.tokensIn || 0} in / {event.tokensOut || 0} out (${event.costUsd?.toFixed(5) || '0.00000'})
+                {event.tokensIn || 0} in / {event.tokensOut || 0} out · {formatUsd(event.costUsd)}
               </div>
+            </div>
+            <div style={{ padding: '10px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
+              <div style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>CACHE</div>
+              <strong>{event.cacheHit ? 'Hit' : 'Miss'}</strong>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Saved {formatUsd(event.savedUsd)}</div>
             </div>
           </div>
 
-          {/* Triggered Violations Summary */}
           <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>
-              VIOLATIONS & TRIGGER REASON
-            </div>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>RULES</div>
             <div style={{
               padding: '12px 14px',
               background: 'rgba(244, 63, 94, 0.08)',
               border: '1px solid rgba(244, 63, 94, 0.2)',
               borderRadius: '8px',
               color: '#fb7185',
-              fontSize: '0.82rem',
-              fontWeight: 500
+              fontSize: '0.82rem'
             }}>
-              {event.violationsSummary || 'No security violations flagged.'}
-              {event.blockReason && (
-                <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Block Details: {event.blockReason}
-                </div>
-              )}
+              {event.violationsSummary || 'No rule hits.'}
+              {event.blockReason ? (
+                <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{event.blockReason}</div>
+              ) : null}
             </div>
           </div>
 
-          {/* Prompt Content */}
           <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>
-              RECORDED PROMPT PAYLOAD
-            </div>
-            <pre style={{
-              background: 'var(--bg-input)',
-              padding: '14px',
-              borderRadius: '8px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.8rem',
-              color: 'var(--text-main)',
-              whiteSpace: 'pre-wrap',
-              border: '1px solid var(--border-subtle)',
-              maxHeight: '160px',
-              overflowY: 'auto'
-            }}>
-              {event.prompt || '(Prompt content not stored)'}
-            </pre>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>MASKED SAMPLES</div>
+            <p style={{ margin: '0 0 8px 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Aegis never stores prompts. Masked samples only.
+            </p>
+            {samples.length === 0 ? (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>No masked samples on this row.</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '0.8rem' }}>
+                {samples.map((sample, index) => (
+                  <li key={`${sample.rule}-${index}`} style={{ marginBottom: '4px' }}>
+                    <strong>{sample.rule || 'rule'}</strong>: {sample.sample}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
-          {/* Output Quality & Verification Heuristics */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.8rem' }}>
-            <div style={{ padding: '12px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
-              <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>RESPONSE QUALITY VERDICT</span>
-              <div style={{ fontWeight: 700, color: event.qualityVerdict === 'FAIL' ? 'var(--accent-rose)' : '#34d399', marginTop: '2px' }}>
-                {event.qualityVerdict || 'PASS'}
-              </div>
-            </div>
-
-            <div style={{ padding: '12px', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px' }}>
-              <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>HALLUCINATION PROBABILITY</span>
-              <div style={{ fontWeight: 700, color: 'var(--text-main)', marginTop: '2px' }}>
-                {event.hallucinationScore != null ? `${(event.hallucinationScore * 100).toFixed(1)}%` : '0.0%'}
-              </div>
-            </div>
-          </div>
+          <PipelineTraceViewer trace={event.trace} />
         </div>
       </div>
     </div>

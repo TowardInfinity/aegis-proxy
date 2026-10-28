@@ -915,65 +915,9 @@ a {
   margin-top: 2px;
 }
 
-/* Mock Chart Graphic for visual presentation */
-.mock-chart-container {
-  height: 220px;
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  padding: 10px 10px 0 10px;
-}
-
-.mock-grid-lines {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  pointer-events: none;
-}
-
 .grid-line {
   border-bottom: 1px dashed var(--border-subtle);
   width: 100%;
-}
-
-.mock-bars {
-  position: relative;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  gap: 14px;
-}
-
-.mock-bar {
-  flex: 1;
-  background: var(--bg-card-hover);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px 6px 0 0;
-  transition: all 0.3s ease;
-}
-
-.mock-bar:hover {
-  background: var(--accent-saffron);
-}
-
-.mock-bar.highlight {
-  background: var(--gradient-guardian);
-  box-shadow: 0 0 15px rgba(212, 118, 10, 0.4);
-}
-
-.mock-caption {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  text-align: center;
-  margin-top: 14px;
 }
 
 /* Policy list */

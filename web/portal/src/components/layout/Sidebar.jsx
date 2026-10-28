@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigation } from '../../context/NavigationContext';
+import { useAdminLink } from '../../services/api';
 
 export default function Sidebar({
   isCollapsed,
@@ -8,9 +9,10 @@ export default function Sidebar({
   onToggleCollapse
 }) {
   const { currentRoute, navigate, routes } = useNavigation();
+  const link = useAdminLink();
+  const adminUp = Boolean(link.checkedAt && link.ok);
 
-  // Group routes by category
-  const categories = ['Core Operations', 'AI Governance Suite', 'Governance & Forensics', 'Infrastructure'];
+  const categories = ['Core Operations', 'Governance & Forensics', 'Infrastructure'];
 
   const getRouteIcon = (routeId) => {
     switch (routeId) {
@@ -99,12 +101,6 @@ export default function Sidebar({
             <polyline points="12 6 12 12 14 14"></polyline>
           </svg>
         );
-      case 'gov-simulator':
-        return (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-          </svg>
-        );
       case 'audit':
         return (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -177,9 +173,9 @@ export default function Sidebar({
           {!isCollapsed && (
             <div className="brand-text-block">
               <div className="brand-title">
-                SDS AI GUARDIAN <span className="brand-edition">SDS</span>
+                Aegis
               </div>
-              <div className="brand-subtitle">AI GOVERNANCE &amp; SECURITY</div>
+              <div className="brand-subtitle">SECOPS CONSOLE</div>
             </div>
           )}
         </div>
@@ -242,11 +238,11 @@ export default function Sidebar({
         {!isCollapsed ? (
           <div className="architecture-card">
             <div className="arch-header">
-              <span className="pulse-dot online"></span>
-              <span className="arch-title">Hexagonal Topology</span>
+              <span className={`pulse-dot ${adminUp ? 'online' : ''}`} style={adminUp ? undefined : { background: '#f43f5e' }}></span>
+              <span className="arch-title">{adminUp ? 'Admin connected' : link.checkedAt ? 'Admin offline' : 'Checking admin'}</span>
             </div>
             <p className="arch-text">
-              Reactive WebFlux pipeline with Kafka event streaming and RFC-7807 audits.
+              {link.error || 'Admin plane on loopback. Data plane on port 8080.'}
             </p>
           </div>
         ) : null}

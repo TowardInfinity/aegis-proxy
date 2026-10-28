@@ -1,39 +1,40 @@
-import React from 'react';
+import { useAdminLink } from '../../services/api';
 import { useTheme } from '../../context/ThemeContext';
 
 export default function StatusBar() {
   const { theme } = useTheme();
+  const link = useAdminLink();
+  const up = Boolean(link.checkedAt && link.ok);
+  const statusText = !link.checkedAt
+    ? 'CHECKING ADMIN'
+    : link.ok
+      ? 'ADMIN CONNECTED'
+      : (link.error || 'ADMIN OFFLINE');
+  const latencyText = link.ok && link.medianLatencyMs != null
+    ? `median ${link.medianLatencyMs} ms`
+    : link.latencyMs != null
+      ? `probe ${link.latencyMs} ms`
+      : '—';
 
   return (
     <footer className="app-status-bar" aria-label="Operational status bar">
-      {/* Left: Engine & Health Status */}
       <div className="status-bar-left">
         <div className="status-indicator-group">
-          <span className="pulse-dot online"></span>
+          <span
+            className={`pulse-dot ${up ? 'online' : ''}`}
+            style={up ? undefined : { background: '#f43f5e' }}
+          ></span>
           <span className="status-label">
-            STATUS: <strong className="text-emerald">ALL ENGINES OPERATIONAL</strong>
+            STATUS: <strong className={up ? 'text-emerald' : 'text-muted'}>{statusText}</strong>
           </span>
         </div>
         <span className="status-divider">|</span>
         <div className="status-item">
-          <span>PIPELINE:</span> <span className="text-cyan">9 STAGES ACTIVE</span>
-        </div>
-        <span className="status-divider">|</span>
-        <div className="status-item">
-          <span>KAFKA BUS:</span> <span className="text-muted">ai.audit.events (PARTITIONS: 3, DLQ: ON)</span>
+          <span>LAST /admin/stats:</span> <span className="text-cyan">{latencyText}</span>
         </div>
       </div>
 
-      {/* Right: Metrics, Framework, Standards */}
       <div className="status-bar-right">
-        <div className="status-item">
-          <span>LATENCY:</span> <span className="text-emerald">p99 &lt; 14ms</span>
-        </div>
-        <span className="status-divider">|</span>
-        <div className="status-item">
-          <span>COMPLIANCE:</span> <span className="text-cyan">NIST AI RMF 1.0</span>
-        </div>
-        <span className="status-divider">|</span>
         <div className="status-item theme-pill">
           <span>THEME:</span> <strong className="text-main uppercase">{theme}</strong>
         </div>

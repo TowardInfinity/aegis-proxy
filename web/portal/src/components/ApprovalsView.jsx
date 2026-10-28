@@ -1,128 +1,119 @@
-import React, { useState, useEffect } from 'react';
-import { ApiService, mockPendingApprovals } from '../services/api';
+import { useCallback, useEffect, useState } from 'react';
+import { ApiService } from '../services/api';
+import ErrorBanner from './ErrorBanner';
 
-export default function ApprovalsView({ pendingApprovals: initialApprovals, onApprovalResolved }) {
-  const [approvals, setApprovals] = useState(initialApprovals && initialApprovals.length > 0 ? initialApprovals : mockPendingApprovals);
-  const [loading, setLoading] = useState(false);
-  const [actionInProgressId, setActionInProgressId] = useState(null);
-  const [resolvedHistory, setResolvedHistory] = useState([]);
-  const [activeModalItem, setActiveModalItem] = useState(null);
-  const [modalActionType, setModalActionType] = useState('APPROVE'); // 'APPROVE' or 'REJECT'
-  const [auditorNotes, setAuditorNotes] = useState('');
+function formatAge(createdAt) {
+  if (!createdAt) return '—';
+  const delta = Date.now() - createdAt;
+  if (!Number.isFinite(delta)) return '—';
+  const sec = Math.max(0, Math.round(delta / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  const rem = min % 60;
+  if (hr < 48) return rem ? `${hr}h ${rem}m` : `${hr}h`;
+  return `${Math.floor(hr / 24)}d`;
+}
+
+function when(ms) {
+  if (!ms) return '—';
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString();
+}
+
+export default function ApprovalsView({ onResolved }) {
+  const [pending, setPending] = useState([]);
+  const [decided, setDecided] = useState([]);
+  const [pendingLoaded, setPendingLoaded] = useState(false);
+  const [decidedLoaded, setDecidedLoaded] = useState(false);
+  const [notes, setNotes] = useState({});
+  const [rowError, setRowError] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [busyTicket, setBusyTicket] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch live approvals on mount
-  useEffect(() => {
-    let isMounted = true;
-    const fetchPending = async () => {
-      setLoading(true);
-      try {
-        const live = await ApiService.getPendingApprovals();
-        if (isMounted && live && live.length > 0) {
-          setApprovals(live);
-        }
-      } catch (e) {
-        console.warn('Approvals API fallback active');
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-    fetchPending();
-    return () => { isMounted = false; };
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [pendingR, allR] = await Promise.allSettled([
+      ApiService.getHeld('pending'),
+      ApiService.getHeld('all'),
+    ]);
+    const messages = [pendingR, allR]
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason?.message || 'Proxy unreachable');
+    setError(messages.length ? messages.join(' · ') : null);
+    if (pendingR.status === 'fulfilled') {
+      setPending(pendingR.value);
+      setPendingLoaded(true);
+    }
+    if (allR.status === 'fulfilled') {
+      setDecided(allR.value.filter((item) => item.status !== 'pending'));
+      setDecidedLoaded(true);
+    }
+    setLoading(false);
   }, []);
 
-  const openDecisionModal = (item, type) => {
-    setActiveModalItem(item);
-    setModalActionType(type);
-    setAuditorNotes(type === 'APPROVE' ? 'Approved under security exception protocol' : 'Violates data governance compliance');
-  };
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const confirmDecision = async () => {
-    if (!activeModalItem) return;
-    const item = activeModalItem;
-    setActionInProgressId(item.id);
-    setActiveModalItem(null);
-
+  const decide = async (item, action) => {
+    setBusyTicket(item.ticket);
+    setRowError((prev) => ({ ...prev, [item.ticket]: null }));
     try {
-      if (modalActionType === 'APPROVE') {
-        await ApiService.approveEvent(item.id, 'secops.lead@enterprise.ai');
-        setResolvedHistory(prev => [{ ...item, status: 'APPROVED', notes: auditorNotes, resolvedAt: new Date() }, ...prev]);
-        setApprovals(prev => prev.filter(p => p.id !== item.id));
-        if (onApprovalResolved) onApprovalResolved(item.id, 'APPROVED');
-      } else {
-        await ApiService.rejectEvent(item.id, 'secops.lead@enterprise.ai');
-        setResolvedHistory(prev => [{ ...item, status: 'REJECTED', notes: auditorNotes, resolvedAt: new Date() }, ...prev]);
-        setApprovals(prev => prev.filter(p => p.id !== item.id));
-        if (onApprovalResolved) onApprovalResolved(item.id, 'REJECTED');
-      }
-    } catch (e) {
-      console.error(e);
+      const note = notes[item.ticket] || '';
+      if (action === 'approve') await ApiService.approveEvent(item.ticket, note);
+      else await ApiService.rejectEvent(item.ticket, note);
+      if (onResolved) onResolved(item.ticket, action === 'approve' ? 'approved' : 'rejected');
+      await load();
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [item.ticket]: err?.message || 'Proxy unreachable' }));
     } finally {
-      setActionInProgressId(null);
+      setBusyTicket(null);
     }
   };
 
-  const filteredApprovals = approvals.filter(item => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      (item.requestId && item.requestId.toLowerCase().includes(term)) ||
-      (item.userId && item.userId.toLowerCase().includes(term)) ||
-      (item.prompt && item.prompt.toLowerCase().includes(term)) ||
-      (item.violationsSummary && item.violationsSummary.toLowerCase().includes(term))
-    );
-  });
+  const term = searchTerm.trim().toLowerCase();
+  const matches = (item) => {
+    if (!term) return true;
+    return [item.ticket, item.key, item.category, item.reason, item.status, item.note]
+      .some((value) => String(value || '').toLowerCase().includes(term));
+  };
+  const visiblePending = pending.filter(matches);
+  const visibleDecided = decided.filter(matches);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
-      {/* Title & Description */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
         <div>
-          <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>
-            Human-in-the-Loop Approval & Review Station
-          </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '4px', margin: 0 }}>
-            Sensitive prompts flagged with HIGH risk scores requiring SecOps or Compliance authorization before LLM dispatch.
+          <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Approvals</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: '4px 0 0 0' }}>
+            Pending holds, plus tickets that are already approved or rejected.
           </p>
         </div>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <span className="badge badge-warning">MANDATORY ESCALATION QUEUE</span>
-        </div>
+        <button onClick={load} className="btn btn-secondary" style={{ fontSize: '0.8rem' }}>Refresh</button>
       </div>
 
-      {/* KPI Status Strip */}
+      <ErrorBanner message={error} />
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
         <div className="glass-card" style={{ padding: '16px 20px' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 600 }}>AWAITING SECOPS REVIEW</span>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '6px', color: 'var(--accent-amber)' }}>
-            {approvals.length}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>High Data Sensitivity or Intern Role</div>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>PENDING</span>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-amber)' }}>{pendingLoaded ? pending.length : '—'}</div>
         </div>
-
         <div className="glass-card" style={{ padding: '16px 20px' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 600 }}>RESOLVED THIS SESSION</span>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '6px', color: 'var(--accent-emerald)' }}>
-            {resolvedHistory.length}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>Audited by SecOps Lead</div>
-        </div>
-
-        <div className="glass-card" style={{ padding: '16px 20px' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 600 }}>AVG TURNAROUND SLA</span>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, marginTop: '6px', color: 'var(--accent-cyan)' }}>
-            3.8m
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '2px' }}>Target SLA: &lt; 15 mins</div>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>DECIDED</span>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>{decidedLoaded ? decided.length : '—'}</div>
         </div>
       </div>
 
-      {/* Search Bar */}
       <div className="glass-card" style={{ padding: '12px 18px' }}>
         <input
           type="text"
-          placeholder="Filter approval queue by user email, request ID, prompt keywords..."
+          placeholder="Filter by ticket, employee, category, or reason"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
@@ -132,161 +123,103 @@ export default function ApprovalsView({ pendingApprovals: initialApprovals, onAp
             color: 'var(--text-main)',
             padding: '8px 12px',
             borderRadius: '8px',
-            fontSize: '0.82rem',
-            outline: 'none'
+            fontSize: '0.82rem'
           }}
         />
       </div>
 
-      {/* Review Queue Cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {loading ? (
-          <div className="glass-card" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-dim)' }}>
-            Loading pending review requests from database...
-          </div>
-        ) : filteredApprovals.length === 0 ? (
-          <div className="glass-card" style={{ padding: '48px', textAlign: 'center', color: 'var(--text-dim)' }}>
-            <div style={{
-              width: '52px',
-              height: '52px',
-              borderRadius: '50%',
-              background: 'rgba(16, 185, 129, 0.1)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 14px auto'
-            }}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </div>
-            <h3 style={{ color: 'var(--text-main)', marginBottom: '4px', fontSize: '1.1rem' }}>Queue Clean & Compliant</h3>
-            <p style={{ fontSize: '0.82rem', margin: 0 }}>All high-risk prompt escalations have been authorized or rejected.</p>
-          </div>
-        ) : (
-          filteredApprovals.map((item) => (
-            <div key={item.id} className="glass-card" style={{ padding: '22px', borderLeft: '4px solid var(--accent-amber)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '12px' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span className="badge badge-high">RISK SCORE: {item.riskScore}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-cyan)' }}>{item.requestId}</span>
-                    <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
-                      • {new Date(item.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.85rem', marginTop: '6px' }}>
-                    User: <strong style={{ color: 'var(--text-main)' }}>{item.userId}</strong> • Role: <strong>{item.userRole}</strong> • Model: {item.model} • Category: {item.promptCategory || 'FINANCE'}
-                  </div>
+        {loading && pending.length === 0 ? (
+          <div className="glass-card" style={{ padding: '28px', color: 'var(--text-dim)' }}>Loading held tickets…</div>
+        ) : visiblePending.length === 0 ? (
+          <div className="glass-card" style={{ padding: '28px', color: 'var(--text-dim)' }}>No pending tickets.</div>
+        ) : visiblePending.map((item) => (
+          <div key={item.ticket} className="glass-card" style={{ padding: '22px', borderLeft: '4px solid var(--accent-amber)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', fontSize: '0.85rem' }}>{item.ticket}</div>
+                <div style={{ marginTop: '6px', fontSize: '0.85rem' }}>
+                  Employee: <strong>{item.key || '—'}</strong> · {item.category || '—'} · age {formatAge(item.created_at)}
                 </div>
-
-                {/* Approve / Reject Actions */}
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button
-                    id={`btn-approve-${item.id}`}
-                    onClick={() => openDecisionModal(item, 'APPROVE')}
-                    disabled={actionInProgressId === item.id}
-                    className="btn btn-success"
-                    style={{ fontSize: '0.78rem', padding: '7px 16px' }}
-                  >
-                    ✓ Authorize Request
-                  </button>
-                  <button
-                    id={`btn-reject-${item.id}`}
-                    onClick={() => openDecisionModal(item, 'REJECT')}
-                    disabled={actionInProgressId === item.id}
-                    className="btn btn-danger"
-                    style={{ fontSize: '0.78rem', padding: '7px 16px' }}
-                  >
-                    ✕ Reject & Terminate
-                  </button>
-                </div>
+                <div style={{ marginTop: '6px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>{item.reason || '—'}</div>
               </div>
-
-              {/* Violations Summary */}
-              <div style={{ marginBottom: '12px', fontSize: '0.8rem' }}>
-                <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>ESCALATION REASON: </span>
-                <span style={{ color: '#fbbf24', fontWeight: 600 }}>{item.violationsSummary}</span>
-              </div>
-
-              {/* Prompt Text Preview */}
-              <div style={{
-                background: 'var(--bg-input)',
-                padding: '14px',
-                borderRadius: '8px',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.82rem',
-                color: 'var(--text-main)',
-                border: '1px solid var(--border-subtle)',
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.5
-              }}>
-                {item.prompt}
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  id={`btn-approve-${item.ticket}`}
+                  className="btn btn-success"
+                  disabled={busyTicket === item.ticket}
+                  onClick={() => decide(item, 'approve')}
+                  style={{ fontSize: '0.78rem' }}
+                >
+                  Approve
+                </button>
+                <button
+                  id={`btn-reject-${item.ticket}`}
+                  className="btn btn-danger"
+                  disabled={busyTicket === item.ticket}
+                  onClick={() => decide(item, 'reject')}
+                  style={{ fontSize: '0.78rem' }}
+                >
+                  Reject
+                </button>
               </div>
             </div>
-          ))
-        )}
-      </div>
-
-      {/* Auditor Decision Dialog Modal */}
-      {activeModalItem && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.75)',
-          backdropFilter: 'blur(6px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: '20px'
-        }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '520px', padding: '24px', borderRadius: '14px' }}>
-            <h3 style={{ fontSize: '1.1rem', margin: '0 0 10px 0', color: modalActionType === 'APPROVE' ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
-              {modalActionType === 'APPROVE' ? 'Authorize Prompt Dispatch' : 'Reject & Terminate Request'}
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
-              Recording auditor attestation in the immutable Kafka audit trail for Request ID <strong>{activeModalItem.requestId}</strong>.
-            </p>
-
-            <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: '6px', fontWeight: 600 }}>
-              AUDITOR REASON & NOTES
-            </label>
-            <textarea
-              rows={4}
-              value={auditorNotes}
-              onChange={(e) => setAuditorNotes(e.target.value)}
+            <input
+              type="text"
+              value={notes[item.ticket] || ''}
+              onChange={(e) => setNotes((prev) => ({ ...prev, [item.ticket]: e.target.value }))}
+              placeholder="Optional note"
               style={{
+                marginTop: '12px',
                 width: '100%',
                 background: 'var(--bg-input)',
                 border: '1px solid var(--border-subtle)',
                 color: 'var(--text-main)',
+                padding: '8px 12px',
                 borderRadius: '8px',
-                padding: '10px',
-                fontSize: '0.82rem',
-                outline: 'none',
-                marginBottom: '16px'
+                fontSize: '0.82rem'
               }}
             />
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button onClick={() => setActiveModalItem(null)} className="btn btn-secondary" style={{ fontSize: '0.78rem' }}>
-                Cancel
-              </button>
-              <button
-                onClick={confirmDecision}
-                className={`btn ${modalActionType === 'APPROVE' ? 'btn-success' : 'btn-danger'}`}
-                style={{ fontSize: '0.78rem' }}
-              >
-                Confirm {modalActionType === 'APPROVE' ? 'Authorization' : 'Rejection'}
-              </button>
-            </div>
+            {rowError[item.ticket] ? (
+              <div style={{ marginTop: '10px', color: '#fb7185', fontSize: '0.82rem', fontWeight: 600 }}>{rowError[item.ticket]}</div>
+            ) : null}
           </div>
-        </div>
-      )}
+        ))}
+      </div>
+
+      <div className="glass-card" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '16px 18px', fontWeight: 700 }}>Decided</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+          <thead>
+            <tr style={{ color: 'var(--text-dim)', textAlign: 'left' }}>
+              <th style={cell}>Ticket</th>
+              <th style={cell}>Employee</th>
+              <th style={cell}>Category</th>
+              <th style={cell}>Status</th>
+              <th style={cell}>Decided by</th>
+              <th style={cell}>When</th>
+              <th style={cell}>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleDecided.length === 0 ? (
+              <tr><td colSpan={7} style={{ ...cell, color: 'var(--text-dim)' }}>No decided tickets.</td></tr>
+            ) : visibleDecided.map((item) => (
+              <tr key={item.ticket} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                <td style={cell}>{item.ticket}</td>
+                <td style={cell}>{item.key || '—'}</td>
+                <td style={cell}>{item.category || '—'}</td>
+                <td style={cell}>{item.status || '—'}</td>
+                <td style={cell}>{item.decided_by || '—'}</td>
+                <td style={cell}>{when(item.decided_at)}</td>
+                <td style={cell}>{item.note || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
+
+const cell = { padding: '12px 16px', verticalAlign: 'top' };
