@@ -151,6 +151,79 @@ func TestScanPrefersLongerOverlap(t *testing.T) {
 	}
 }
 
+// defaultDetectors is the documented detector set. Phone is listed before
+// ssn, so a same-span tie used to keep the phone hit.
+func defaultDetectors() []Detector {
+	return Detectors([]string{
+		"email", "phone", "ssn", "credit_card", "aws_key", "jwt",
+		"private_key", "generic_secret", "iban",
+	})
+}
+
+func TestScanSpacedIBAN(t *testing.T) {
+	dets := defaultDetectors()
+	tests := []struct {
+		text string
+		iban string
+	}{
+		{"Pay IBAN DE89 3704 0044 0532 0130 00 today", "DE89 3704 0044 0532 0130 00"},
+		{"Pay IBAN GB82 WEST 1234 5698 7654 32 today", "GB82 WEST 1234 5698 7654 32"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.iban, func(t *testing.T) {
+			matches := Scan(dets, tt.text)
+			for _, m := range matches {
+				if m.Rule == "phone" || m.Rule == "credit_card" {
+					t.Errorf("inner %s match survived: %+v", m.Rule, m)
+				}
+			}
+			if len(matches) != 1 {
+				t.Fatalf("got %d matches, want 1: %+v", len(matches), matches)
+			}
+			m := matches[0]
+			if m.Rule != "iban" {
+				t.Fatalf("rule %q, want iban", m.Rule)
+			}
+			if got := tt.text[m.Start:m.End]; got != tt.iban || m.Value != tt.iban {
+				t.Fatalf("span %q value %q, want %q", got, m.Value, tt.iban)
+			}
+		})
+	}
+
+	bad := "DE89 3704 0044 0532 0130 01"
+	for _, m := range Scan(dets, bad) {
+		if m.Rule == "iban" {
+			t.Fatalf("invalid checksum matched: %+v", m)
+		}
+	}
+}
+
+func TestScanDashedSSNPrefersHigherScore(t *testing.T) {
+	dets := defaultDetectors()
+	tests := []struct {
+		text string
+		rule string
+		val  string
+	}{
+		{"SSN 123-45-6789", "ssn", "123-45-6789"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.val, func(t *testing.T) {
+			matches := Scan(dets, tt.text)
+			if len(matches) != 1 {
+				t.Fatalf("got %d matches, want 1: %+v", len(matches), matches)
+			}
+			m := matches[0]
+			if m.Rule != tt.rule {
+				t.Fatalf("rule %q, want %q", m.Rule, tt.rule)
+			}
+			if got := tt.text[m.Start:m.End]; got != tt.val || m.Value != tt.val {
+				t.Fatalf("span %q value %q, want %q", got, m.Value, tt.val)
+			}
+		})
+	}
+}
+
 // Agents put today's date and version strings in their system prompts; none of
 // them may be tokenized as a phone number.
 func TestPhoneIgnoresDatesAndVersions(t *testing.T) {

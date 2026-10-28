@@ -57,7 +57,7 @@ func Detectors(names []string) []Detector {
 }
 
 // Scan runs every detector and returns non-overlapping matches ordered by
-// position. Longer matches win an overlap.
+// position. A longer span wins an overlap. The same span keeps the higher score.
 func Scan(dets []Detector, text string) []Match {
 	var all []Match
 	for _, d := range dets {
@@ -67,7 +67,10 @@ func Scan(dets []Detector, text string) []Match {
 		if all[i].Start != all[j].Start {
 			return all[i].Start < all[j].Start
 		}
-		return all[i].End > all[j].End
+		if all[i].End != all[j].End {
+			return all[i].End > all[j].End
+		}
+		return all[i].Score > all[j].Score
 	})
 	out := all[:0]
 	last := 0
@@ -104,7 +107,9 @@ var (
 	reAWS  = regexp.MustCompile(`\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}\b`)
 	reJWT  = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\b`)
 	rePriv = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)
-	reIBAN = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b`)
+	// Compact, or groups of four separated by a single space with an optional
+	// final group of 1-4. The checksum sees the text with spaces removed.
+	reIBAN = regexp.MustCompile(`\b[A-Z]{2}\d{2}(?:[A-Z0-9]{10,30}|(?: [A-Z0-9]{4})+(?: [A-Z0-9]{1,4})?)\b`)
 
 	// The value group is what gets tokenized; keying on the assignment keeps
 	// "api_key=" from matching prose that merely mentions the word. The
@@ -173,7 +178,7 @@ func scanIBAN(text string) []Match {
 	var out []Match
 	for _, m := range reIBAN.FindAllStringIndex(text, -1) {
 		raw := text[m[0]:m[1]]
-		if !validIBAN(raw) {
+		if !validIBAN(strings.ReplaceAll(raw, " ", "")) {
 			continue
 		}
 		out = append(out, Match{Type: "IBAN", Rule: "iban", Score: 0.85, Start: m[0], End: m[1], Value: raw})
