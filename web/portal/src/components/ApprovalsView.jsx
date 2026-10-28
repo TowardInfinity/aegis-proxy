@@ -137,7 +137,10 @@ export default function ApprovalsView({ onResolved }) {
           <div key={item.ticket} className="glass-card" style={{ padding: '22px', borderLeft: '4px solid var(--accent-amber)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <div>
-                <div style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', fontSize: '0.85rem' }}>{item.ticket}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className="badge badge-critical" title="A judge escalation is the strongest signal, so it scores 100.">RISK SCORE: 100/100</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', fontSize: '0.85rem' }}>{item.ticket}</span>
+                </div>
                 <div style={{ marginTop: '6px', fontSize: '0.85rem' }}>
                   Employee: <strong>{item.key || '—'}</strong> · {item.category || '—'} · age {formatAge(item.created_at)}
                 </div>

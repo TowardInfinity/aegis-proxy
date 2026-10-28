@@ -210,7 +210,7 @@ export default function AuditLogView({ onSelectEvent }) {
                   <span className={`badge ${event.riskLevel === 'CRITICAL' ? 'badge-critical' : event.riskLevel === 'HIGH' ? 'badge-high' : event.riskLevel === 'MEDIUM' ? 'badge-medium' : 'badge-low'}`}>
                     {event.riskLevel}
                   </span>
-                  <strong style={{ marginLeft: '8px' }}>{event.riskScore}</strong>
+                  <strong style={{ marginLeft: '8px' }}>{event.riskScore}</strong><span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>/100</span>
                 </td>
                 <td style={{ ...td, color: event.action === 'BLOCK' ? 'var(--accent-rose)' : event.action === 'REVIEW' ? 'var(--accent-amber)' : 'var(--accent-emerald)', fontWeight: 700 }}>
                   {event.action}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ApiService } from '../services/api';
+import { ApiService, riskFromCheck } from '../services/api';
+import RiskScore from './RiskScore';
 import PipelineTraceViewer from './PipelineTraceViewer';
 import ErrorBanner from './ErrorBanner';
 
@@ -209,6 +210,7 @@ export default function PlaygroundView() {
                   Decision: <strong>{checkResult.decision || '—'}</strong>
                   {Number.isFinite(checkResult.injection_score) ? ` · injection ${checkResult.injection_score}` : ''}
                 </div>
+                <RiskScore {...riskFromCheck(checkResult)} />
                 <div>
                   <div style={{ color: 'var(--text-dim)', fontSize: '0.72rem', marginBottom: '4px' }}>REDACTED TEXT</div>
                   <pre style={preStyle}>{checkResult.redacted_text || '—'}</pre>

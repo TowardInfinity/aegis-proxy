@@ -81,6 +81,33 @@ async function requestJson(path, options = {}) {
   return body;
 }
 
+// Risk score: the strongest real signal on the request, scaled to 0-100.
+// Signals are detector confidences, the injection score and the judge (an
+// escalation counts as 1). Bands match the Round-2 portal.
+export function riskLevelFor(score) {
+  if (score >= 80) return 'CRITICAL';
+  if (score >= 60) return 'HIGH';
+  if (score >= 30) return 'MEDIUM';
+  return 'LOW';
+}
+
+export function riskFromSignals(signals) {
+  const factors = signals
+    .map((signal) => ({ label: signal.label, points: Math.round((Number(signal.score) || 0) * 100) }))
+    .filter((factor) => factor.points > 0)
+    .sort((a, b) => b.points - a.points);
+  const score = Math.min(100, factors.length ? factors[0].points : 0);
+  return { score, level: riskLevelFor(score), factors };
+}
+
+// riskFromCheck scores a /simulate result.
+export function riskFromCheck(result) {
+  const signals = (Array.isArray(result?.hits) ? result.hits : []).map((hit) => ({ label: hit.rule, score: hit.score }));
+  if (Number(result?.injection_score) > 0) signals.push({ label: 'injection (combined)', score: result.injection_score });
+  if (result?.judge?.escalate) signals.push({ label: `judge escalate (${result.judge.category || 'confidential'})`, score: 1 });
+  return riskFromSignals(signals);
+}
+
 function mapLedgerRow(row) {
   const hits = Array.isArray(row?.RuleHits) ? row.RuleHits : [];
   const heldHit = hits.find((hit) => HELD_RULES.includes(hit.rule));
@@ -90,12 +117,7 @@ function mapLedgerRow(row) {
   if (held) action = 'REVIEW';
   else if (raw === 'block') action = 'BLOCK';
 
-  let riskLevel = 'LOW';
-  if (raw === 'block') riskLevel = 'CRITICAL';
-  else if (held) riskLevel = 'HIGH';
-  else if (raw === 'redact') riskLevel = 'MEDIUM';
-
-  const maxScore = hits.reduce((max, hit) => Math.max(max, Number(hit.score) || 0), 0);
+  const risk = riskFromSignals(hits.map((hit) => ({ label: hit.rule, score: hit.score })));
   const id = row?.RequestID ? String(row.RequestID) : `${row?.TS || ''}|${row?.Key || ''}`;
 
   let blockReason = '';
@@ -112,8 +134,9 @@ function mapLedgerRow(row) {
     model: row?.Model || '',
     action,
     rawAction: raw,
-    riskLevel,
-    riskScore: hits.length ? Math.round(maxScore * 100) : 0,
+    riskLevel: risk.level,
+    riskScore: risk.score,
+    riskFactors: risk.factors,
     tokensIn: row?.InputTokens || 0,
     tokensOut: row?.OutputTokens || 0,
     costUsd: row?.CostUSD || 0,

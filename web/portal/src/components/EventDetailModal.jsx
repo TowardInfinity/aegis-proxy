@@ -1,5 +1,6 @@
 import { formatUsd } from '../services/api';
 import PipelineTraceViewer from './PipelineTraceViewer';
+import RiskScore from './RiskScore';
 
 function when(ts) {
   if (!ts) return '—';
@@ -45,7 +46,7 @@ export default function EventDetailModal({ event, onClose }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span className={`badge ${event.riskLevel === 'CRITICAL' ? 'badge-critical' : event.riskLevel === 'HIGH' ? 'badge-high' : event.riskLevel === 'MEDIUM' ? 'badge-medium' : 'badge-low'}`}>
-                {event.riskLevel} · {event.riskScore}
+                {event.riskLevel} · {event.riskScore}/100
               </span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-dim)' }}>
                 {event.requestId}
@@ -85,6 +86,8 @@ export default function EventDetailModal({ event, onClose }) {
               <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Saved {formatUsd(event.savedUsd)}</div>
             </div>
           </div>
+
+          <RiskScore score={event.riskScore} level={event.riskLevel} factors={event.riskFactors} />
 
           <div>
             <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-dim)', marginBottom: '6px' }}>RULES</div>
